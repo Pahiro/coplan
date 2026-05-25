@@ -1,0 +1,302 @@
+import 'package:collection/collection.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../core/constants.dart';
+import '../core/pb_client.dart';
+import '../models/custody_request.dart';
+import '../services/queue_service.dart';
+import '../services/widget_cache_service.dart';
+import 'auth_provider.dart';
+import 'queue_count_provider.dart';
+import 'schedule_provider.dart';
+
+// ── Badge count ───────────────────────────────────────────────────────────────
+
+/// Pending requests directed at the current user — drives the notification bell.
+final pendingCustodyCountProvider = Provider<int>((ref) {
+  final myId     = ref.watch(authProvider).valueOrNull?.userId ?? '';
+  final requests = ref.watch(custodyRequestsProvider).valueOrNull ?? const [];
+  return requests
+      .where((r) =>
+          r.requestedFrom == myId && r.status == CustodyStatus.pending)
+      .length;
+});
+
+// ── Read ──────────────────────────────────────────────────────────────────────
+
+final custodyRequestsProvider =
+    AsyncNotifierProvider<CustodyRequestsNotifier, List<CustodyRequest>>(
+  CustodyRequestsNotifier.new,
+);
+
+class CustodyRequestsNotifier
+    extends AsyncNotifier<List<CustodyRequest>> {
+  @override
+  Future<List<CustodyRequest>> build() => _fetch();
+
+  Future<List<CustodyRequest>> _fetch() async {
+    final userId = pb.authStore.record?.id ?? '';
+    final records = await pb.collection('custody_requests').getFullList(
+      filter: 'created_by = "$userId" || requested_from = "$userId"',
+      sort:   '-date',
+    );
+    return records
+        .map((r) => CustodyRequest.fromRecord(r.toJson()))
+        .toList();
+  }
+
+  // ── Write: custody request ─────────────────────────────────────────────────
+
+  /// Creates a custody request. Set [iAmTaking] to true when the current user
+  /// will receive the kids, false when asking the other parent to take them.
+  ///
+  /// Omit [returnTime] and leave [returnTimeTbd] false for a day transfer
+  /// (no return expected — kids stay overnight). Set [returnTimeTbd] for a
+  /// window where the return time is yet to be confirmed.
+  Future<void> createRequest({
+    required bool iAmTaking,
+    required String date,
+    required String childName,
+    required String pickupTime,
+    String? returnTime,
+    bool returnTimeTbd = false,
+    String? note,
+    bool repeatWeekly = false,
+    String? repeatReason,
+    bool toParentCollects = true,
+    bool toParentReturns  = false,
+  }) async {
+    final auth      = ref.read(authProvider).valueOrNull;
+    final myId      = auth?.userId ?? '';
+    final myName    = auth?.userName?.trim() ?? AppConstants.parentBennet;
+    final otherName = myName == AppConstants.parentBennet
+        ? AppConstants.parentJana
+        : AppConstants.parentBennet;
+
+    final otherId = await otherParentId();
+
+    final body = {
+      'from_parent':       iAmTaking ? otherName : myName,
+      'to_parent':         iAmTaking ? myName    : otherName,
+      'date':              date,
+      'child_name':        childName,
+      'pickup_time':       pickupTime,
+      'return_time':       returnTime ?? '',
+      'return_time_tbd':   returnTimeTbd,
+      'status':            'pending',
+      'note':              note ?? '',
+      'created_by':        myId,
+      'requested_from':    otherId,
+      'to_parent_collects': toParentCollects,
+      'to_parent_returns':  toParentReturns,
+    };
+
+    try {
+      await pb.collection('custody_requests').create(body: body);
+    } catch (e) {
+      if (!isNetworkError(e)) rethrow;
+      await QueueService.enqueue(PendingOp(
+        id:         QueueService.newOpId(),
+        collection: 'custody_requests',
+        method:     'create',
+        body:       body,
+      ));
+      _updateCount();
+      return;
+    }
+    ref.invalidateSelf();
+    ref.invalidate(dashboardProvider);
+
+    if (repeatWeekly) {
+      final date_ = DateTime.parse(date);
+      final assignedParent = iAmTaking ? myName : otherName;
+      final reason = (repeatReason?.isNotEmpty ?? false)
+          ? repeatReason!
+          : '${iAmTaking ? "Weekly pickup" : "Weekly transfer"} by $myName';
+      await ref.read(weekdayRulesNotifierProvider.notifier).create(
+            dayOfWeek:      date_.weekday,
+            assignedParent: assignedParent,
+            reason:         reason,
+          );
+    }
+  }
+
+  // ── Write: edit / delete ──────────────────────────────────────────────────
+
+  Future<void> updateRequest(
+    String id, {
+    required String date,
+    required String childName,
+    required String pickupTime,
+    String? returnTime,
+    bool returnTimeTbd = false,
+    String? note,
+    bool toParentCollects = true,
+    bool toParentReturns  = false,
+  }) async {
+    final body = {
+      'date':              date,
+      'child_name':        childName,
+      'pickup_time':       pickupTime,
+      'return_time':       returnTime ?? '',
+      'return_time_tbd':   returnTimeTbd,
+      'note':              note ?? '',
+      'to_parent_collects': toParentCollects,
+      'to_parent_returns':  toParentReturns,
+    };
+    try {
+      await pb.collection('custody_requests').update(id, body: body);
+    } catch (e) {
+      if (!isNetworkError(e)) rethrow;
+      await QueueService.enqueue(PendingOp(
+        id:         QueueService.newOpId(),
+        collection: 'custody_requests',
+        method:     'update',
+        body:       body,
+        recordId:   id,
+      ));
+      _updateCount();
+      return;
+    }
+    ref.invalidateSelf();
+    ref.invalidate(dashboardProvider);
+  }
+
+  Future<void> deleteRequest(String id) async {
+    await pb.collection('custody_requests').delete(id);
+    ref.invalidateSelf();
+    ref.invalidate(dashboardProvider);
+  }
+
+  // ── Write: respond / complete ──────────────────────────────────────────────
+
+  Future<void> respond(String id, {required bool accept}) async {
+    final body = {'status': accept ? 'accepted' : 'declined'};
+    try {
+      await pb.collection('custody_requests').update(id, body: body);
+    } catch (e) {
+      if (!isNetworkError(e)) rethrow;
+      await QueueService.enqueue(PendingOp(
+        id:         QueueService.newOpId(),
+        collection: 'custody_requests',
+        method:     'update',
+        body:       body,
+        recordId:   id,
+      ));
+      _updateCount();
+      return;
+    }
+    ref.invalidateSelf();
+    ref.invalidate(dashboardProvider);
+  }
+
+  /// Mark a window request completed once the kids have been returned.
+  Future<void> complete(String id) async {
+    const body = {'status': 'completed'};
+    try {
+      await pb.collection('custody_requests').update(id, body: body);
+    } catch (e) {
+      if (!isNetworkError(e)) rethrow;
+      await QueueService.enqueue(PendingOp(
+        id:         QueueService.newOpId(),
+        collection: 'custody_requests',
+        method:     'update',
+        body:       {'status': 'completed'},
+        recordId:   id,
+      ));
+      _updateCount();
+      return;
+    }
+    ref.invalidateSelf();
+  }
+
+  // ── Write: shared one-off event ────────────────────────────────────────────
+
+  Future<void> createSharedEvent({
+    required String targetDate,
+    required String childName,
+    required String time,
+    required String activity,
+    required String location,
+    required String assignedParent,
+  }) async {
+    final auth = ref.read(authProvider).valueOrNull;
+    final myId = auth?.userId ?? '';
+    final body = {
+      'target_date':     targetDate,
+      'child_name':      childName,
+      'original_parent': assignedParent,
+      'assigned_parent': assignedParent,
+      'override_time':   time,
+      'reason':          activity,  // required field — use activity as reason
+      'created_by':      myId,
+      'is_adhoc':        true,
+      'is_shared':       true,
+      'activity':        activity,
+      'location':        location,
+    };
+    try {
+      await pb.collection('manual_overrides').create(body: body);
+    } catch (e) {
+      if (!isNetworkError(e)) rethrow;
+      await QueueService.enqueue(PendingOp(
+        id:         QueueService.newOpId(),
+        collection: 'manual_overrides',
+        method:     'create',
+        body:       body,
+      ));
+      _updateCount();
+      return;
+    }
+    ref.invalidate(dashboardProvider);
+    ref.invalidate(weekEventsProvider);
+    ref.invalidate(resolvedDayProvider);
+    WidgetCacheService.updateCache(); // refresh home-screen widget immediately
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  /// Returns the PocketBase user id of the other parent.
+  ///
+  /// Three fallback strategies so this works offline after the first success:
+  ///   1. List all users and take the one that isn't me.
+  ///   2. Search by the partner's display name.
+  ///   3. Return the value cached in SharedPreferences from a previous call.
+  Future<String> otherParentId() async {
+    final myId      = pb.authStore.record?.id ?? '';
+    final myName    = pb.authStore.record?.data['name'] as String? ?? '';
+    final partnerName = myName == AppConstants.parentBennet
+        ? AppConstants.parentJana
+        : AppConstants.parentBennet;
+
+    try {
+      final users = await pb.collection('users').getFullList();
+      final other = users.firstWhereOrNull((u) => u.id != myId);
+      if (other != null) {
+        await QueueService.saveOtherParentId(other.id);
+        return other.id;
+      }
+    } catch (_) {}
+
+    try {
+      final other = await pb
+          .collection('users')
+          .getFirstListItem('name = "$partnerName"');
+      await QueueService.saveOtherParentId(other.id);
+      return other.id;
+    } catch (_) {}
+
+    final cached = await QueueService.loadOtherParentId();
+    if (cached != null) return cached;
+
+    throw Exception(
+      '$partnerName has not registered yet — ask them to log in to CoPlan first, '
+      'or check that the users collection list rule allows authenticated access.',
+    );
+  }
+
+  void _updateCount() async {
+    final count = await QueueService.pendingCount();
+    ref.read(pendingOpsCountProvider.notifier).state = count;
+  }
+}

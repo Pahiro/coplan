@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CoPlan</string>
+    <string name="widget_description">Shows the next 3 events — Minimal style</string>
+    <string name="widget_description_2">Shows the next 3 events — Material style</string>
+    <string name="widget_description_3">Shows the next 3 events — Timeline style</string>
+    <string name="widget_name_1">CoPlan – Minimal</string>
+    <string name="widget_name_2">CoPlan – Material</string>
+    <string name="widget_name_3">CoPlan – Timeline</string>
+</resources>
