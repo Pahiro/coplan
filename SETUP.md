@@ -20,9 +20,9 @@ or via the **CoPlan app** itself once installed.
 
 | What | Where in admin UI | Notes |
 |---|---|---|
-| User accounts (Bennet, Jana) | Collections → users | Set `name` to exactly `"Bennet"` or `"Jana"` |
+| User accounts (Father, Mother) | Collections → users | Set `name` to exactly `"Father"` or `"Mother"` |
 | Parent preferred colour | Collections → users → record | Field `preferred_color` e.g. `#1565C0` |
-| Child colours (Henri, Chris) | Collections → app_settings | Keys `color_henri`, `color_chris` |
+| Child colours (Child 1, Child 2) | Collections → app_settings | Keys `color_child1`, `color_child2` |
 | Base schedule rules | Collections → rules_base | Times, locations, activities, default parent |
 | Manual overrides | Collections → manual_overrides | One record per date override |
 | Pickup requests | Collections → pickup_requests | Visible to both parents |
@@ -35,7 +35,7 @@ flutter build apk \
   --dart-define=PB_URL=https://coplan.yourdomain.com \
   --dart-define=ROTATION_ANCHOR=2026-05-18
 
-# ROTATION_ANCHOR must be the Monday of a week where Bennet had the kids.
+# ROTATION_ANCHOR must be the Monday of a week where the Father had the kids.
 # Default is 2026-05-18 if omitted.
 # PB_URL defaults to http://localhost:8090 for local dev.
 ```
@@ -73,13 +73,13 @@ Open **http://localhost:8090/_/** → create your admin account.
 In the admin UI:
 
 1. Collections → **users** → **+ New record**
-   - `email`: `bennet@coplan.local`
+   - `email`: `father@coplan.local`
    - `password`: anything (8+ chars)
-   - `name`: `Bennet`
+   - `name`: `Father`
    - `preferred_color`: `#1565C0` (or leave blank for default)
-2. Repeat for Jana:
-   - `email`: `jana@coplan.local`
-   - `name`: `Jana`
+2. Repeat for the Mother:
+   - `email`: `mother@coplan.local`
+   - `name`: `Mother`
    - `preferred_color`: `#D81B60`
 
 ### 2c — Run the Flutter web app

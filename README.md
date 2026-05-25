@@ -35,7 +35,7 @@ Co-parenting scheduler for two parents — Flutter/Android app with a self-hoste
 
 | Collection | Purpose |
 |---|---|
-| `users` | Two parent accounts (`Bennet`, `Jana`) |
+| `users` | Two parent accounts (`Father`, `Mother`) |
 | `rules_base` | Standing weekly schedule (day-of-week, time, activity, location) |
 | `manual_overrides` | Date-specific parent substitutions and ad-hoc one-off events |
 | `custody_weekday_rules` | Fixed recurring weekday overrides (higher priority than rotation) |
@@ -117,7 +117,7 @@ See **[SETUP.md](SETUP.md)** for the full step-by-step guide. Quick reference:
 ```bash
 flutter build apk --release \
   --dart-define=PB_URL=https://your-domain.com \
-  --dart-define=ROTATION_ANCHOR=YYYY-MM-DD   # Monday of a known Bennet week
+  --dart-define=ROTATION_ANCHOR=YYYY-MM-DD   # Monday of a known Father week
 ```
 
 ### Flutter Web (served by PocketBase)
@@ -144,7 +144,7 @@ bash backend/deploy.sh
 | Flag | Default | Description |
 |---|---|---|
 | `PB_URL` | `http://localhost:8090` | PocketBase server URL |
-| `ROTATION_ANCHOR` | `2026-05-18` | Monday of a week where Bennet had the children |
+| `ROTATION_ANCHOR` | `2026-05-18` | Monday of a week where the Father had the children |
 
 ---
 
@@ -161,6 +161,6 @@ bash backend/deploy.sh
 
 ## Rotation Anchor
 
-The week-rotation baseline alternates ownership week by week from a fixed Monday. Set `ROTATION_ANCHOR` to any Monday when Bennet had the children. The parity of weeks elapsed from that anchor determines who owns each subsequent week (even = Bennet, odd = Jana).
+The week-rotation baseline alternates ownership week by week from a fixed Monday. Set `ROTATION_ANCHOR` to any Monday when the Father had the children. The parity of weeks elapsed from that anchor determines who owns each subsequent week (even = Father, odd = Mother).
 
 To recalculate after a schedule change, find a new reference Monday and rebuild with the updated `--dart-define=ROTATION_ANCHOR=YYYY-MM-DD`.
