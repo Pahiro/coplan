@@ -39,7 +39,7 @@ Co-parenting scheduler for two parents — Flutter/Android app with a self-hoste
 | `rules_base` | Standing weekly schedule (day-of-week, time, activity, location) |
 | `manual_overrides` | Date-specific parent substitutions and ad-hoc one-off events |
 | `custody_weekday_rules` | Fixed recurring weekday overrides (higher priority than rotation) |
-| `custody_requests` | Accepted/pending day-transfer and time-window handover requests |
+| `custody_requests` | Pending/accepted day-transfer and time-window handover requests; drives notifications |
 | `app_settings` | Child colours and other key/value config |
 
 ### Resolution Engine

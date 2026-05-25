@@ -347,11 +347,11 @@ class CoplanSyncWorker(
         return results
     }
 
-    // ── Pickup request notification ──────────────────────────────────────────
+    // ── Custody request notification ─────────────────────────────────────────
 
     private fun notifyNewRequests(pbUrl: String, token: String, myId: String) {
         val pending = fetchCollection(
-            pbUrl, token, "pickup_requests",
+            pbUrl, token, "custody_requests",
             filter = "status='pending'&&requested_from='$myId'"
         )
         if (pending.length() == 0) return
@@ -371,7 +371,7 @@ class CoplanSyncWorker(
                 newIds += id
                 if (firstBody.isEmpty()) {
                     val child = r.optString("child_name", "the children")
-                    val date  = r.optString("target_date", "an upcoming date")
+                    val date  = r.optString("date", "an upcoming date")
                     firstBody = "Your co-parent requests you handle $child on $date"
                 }
             }
@@ -387,7 +387,7 @@ class CoplanSyncWorker(
 
         showNotification(
             id    = 1,
-            title = "New Pickup Request" + if (newIds.size > 1) " (${newIds.size})" else "",
+            title = "New Custody Request" + if (newIds.size > 1) " (${newIds.size})" else "",
             body  = firstBody
         )
     }
