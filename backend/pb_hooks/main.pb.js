@@ -34,6 +34,19 @@ cronAdd("freezeRecurring", "5 0 * * *", () => {
             const weeks = Math.floor((mondayOf(d) - mondayOf(parse(anchorStr))) / (7 * DAY));
             return (((weeks % 2) + 2) % 2) === 0 ? parentEven : parentOdd;
         };
+
+        // Mirror the app engine's baseOwner: weekday rule > rotation.
+        // Keeps the freeze conditional identical to the live expansion
+        // (see ISSUES.md #2 / DESIGN §5).
+        let weekdayRuleMap = {};
+        try {
+            const wdRules = dao.findRecordsByFilter("custody_weekday_rules", "active = true", "", 500, 0);
+            for (const r of wdRules) {
+                weekdayRuleMap[r.getInt("day_of_week")] = r.get("parent");
+            }
+        } catch (_) { /* collection may not exist or be empty */ }
+        const baseOwner = (d) => weekdayRuleMap[isoDow(d)] || weekOwner(d);
+
         const userId = (name) => {
             try { return dao.findFirstRecordByData("users", "name", name).id; }
             catch (_) { return ""; }
@@ -57,8 +70,9 @@ cronAdd("freezeRecurring", "5 0 * * *", () => {
                 const dStr = fmt(d);
                 if (startDate && dStr < startDate) continue;
 
-                // Only fire on weeks where the OTHER parent owns the day.
-                const owner = weekOwner(d);
+                // Only fire on weeks where the OTHER parent owns the day
+                // (mirrors the app engine's baseOwner conditional).
+                const owner = baseOwner(d);
                 if (owner === toParent) continue;
 
                 // Skip if a real request already covers this date + child.

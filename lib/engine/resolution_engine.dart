@@ -43,10 +43,13 @@ class ResolutionEngine {
       _weekdayRuleParent(date.weekday) ?? weekOwner(date);
 
   /// Returns the parent who "owns" the week containing [date] by rotation.
+  ///
+  /// Uses UTC epoch math so that DST transitions never shift [Duration.inDays]
+  /// and flip the parity (see ISSUES.md #1).
   Parent weekOwner(DateTime date) {
-    final monday       = _toMonday(date);
-    final anchorMonday = _toMonday(AppConstants.rotationAnchor);
-    final weeks        = monday.difference(anchorMonday).inDays ~/ 7;
+    final monday       = _toMondayUtc(date);
+    final anchorMonday = _toMondayUtc(AppConstants.rotationAnchor);
+    final weeks = (monday.millisecondsSinceEpoch - anchorMonday.millisecondsSinceEpoch) ~/ (7 * 86400000);
     return weeks.isEven ? Parent.bennet : Parent.jana;
   }
 
@@ -331,8 +334,11 @@ class ResolutionEngine {
     return rule?.parent;
   }
 
-  DateTime _toMonday(DateTime d) =>
-      DateTime(d.year, d.month, d.day).subtract(Duration(days: d.weekday - 1));
+  /// Returns the Monday of the ISO week containing [d], pinned to UTC midnight.
+  /// Using UTC avoids DST-induced hour offsets that would corrupt week parity
+  /// (see ISSUES.md #1).
+  DateTime _toMondayUtc(DateTime d) =>
+      DateTime.utc(d.year, d.month, d.day - (d.weekday - 1));
 
   bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
