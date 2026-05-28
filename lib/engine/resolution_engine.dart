@@ -6,6 +6,7 @@ import '../models/custody_request.dart';
 import '../models/manual_override.dart';
 import '../models/recurring_arrangement.dart';
 import '../models/resolved_event.dart';
+import '../models/rotation_scheme.dart';
 import '../models/weekday_rule.dart';
 
 /// Pure Dart class — no Flutter framework dependencies beyond [TimeOfDay].
@@ -13,7 +14,7 @@ import '../models/weekday_rule.dart';
 /// Priority for any given event slot:
 ///   1. Manual override      (date-specific record in manual_overrides)
 ///   2. Weekday rule         (recurring day-of-week record in custody_weekday_rules)
-///   3. Base rotation        (even/odd week from [rotationAnchor])
+///   3. Base rotation        (pattern-based from [rotationScheme] and [rotationAnchor])
 ///
 /// Accepted [CustodyRequest]s layer on top:
 ///   - Day transfers  override [dayOwner] for that date (higher priority than weekday rules).
@@ -34,6 +35,9 @@ class ResolutionEngine {
   final String   rotationParentEven;
   final String   rotationParentOdd;
 
+  /// The rotation pattern scheme (default: weekly 7/7).
+  final RotationScheme rotationScheme;
+
   /// Per-date cache for [effectiveCustodyFor] to avoid recomputing the merged
   /// real + virtual custody list multiple times per [resolveDay] pass.
   final Map<int, List<CustodyRequest>> _custodyCache = {};
@@ -44,10 +48,11 @@ class ResolutionEngine {
     required this.rotationAnchor,
     required this.rotationParentEven,
     required this.rotationParentOdd,
+    RotationScheme? rotationScheme,
     this.custodyRequests       = const [],
     this.weekdayRules          = const [],
     this.recurringArrangements = const [],
-  });
+  }) : rotationScheme = rotationScheme ?? RotationScheme.weekly();
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -57,15 +62,15 @@ class ResolutionEngine {
   String baseOwner(DateTime date) =>
       _weekdayRuleParent(date.weekday) ?? weekOwner(date);
 
-  /// Returns the parent who "owns" the week containing [date] by rotation.
+  /// Returns the rotation parent for [date] based on the configured scheme.
   ///
   /// Uses UTC epoch math so that DST transitions never shift [Duration.inDays]
   /// and flip the parity (see ISSUES.md #1).
   String weekOwner(DateTime date) {
-    final monday       = _toMondayUtc(date);
-    final anchorMonday = _toMondayUtc(rotationAnchor);
-    final weeks = (monday.millisecondsSinceEpoch - anchorMonday.millisecondsSinceEpoch) ~/ (7 * 86400000);
-    return weeks.isEven ? rotationParentEven : rotationParentOdd;
+    final dateUtc   = DateTime.utc(date.year, date.month, date.day);
+    final anchorUtc = DateTime.utc(rotationAnchor.year, rotationAnchor.month, rotationAnchor.day);
+    final daysSince = (dateUtc.millisecondsSinceEpoch - anchorUtc.millisecondsSinceEpoch) ~/ 86400000;
+    return rotationScheme.ownerAtDay(daysSince, rotationParentEven, rotationParentOdd);
   }
 
   /// The primary responsible parent for an entire day.
@@ -363,12 +368,6 @@ class ResolutionEngine {
         (r) => r.active && r.dayOfWeek == weekday);
     return rule?.assignedParent;
   }
-
-  /// Returns the Monday of the ISO week containing [d], pinned to UTC midnight.
-  /// Using UTC avoids DST-induced hour offsets that would corrupt week parity
-  /// (see ISSUES.md #1).
-  DateTime _toMondayUtc(DateTime d) =>
-      DateTime.utc(d.year, d.month, d.day - (d.weekday - 1));
 
   bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;

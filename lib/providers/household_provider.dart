@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/pb_client.dart';
 import '../models/household.dart';
+import '../models/rotation_scheme.dart';
 import 'auth_provider.dart';
 
 /// Provides the current user's active [HouseholdConfig] — members, children,
@@ -129,6 +130,18 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
       'rotation_anchor':       anchor,
       'rotation_parent_even':  evenParentUserId,
       'rotation_parent_odd':   oddParentUserId,
+    });
+    ref.invalidateSelf();
+  }
+
+  /// Update the rotation scheme (pattern type) for the current household.
+  Future<void> updateRotationScheme(RotationScheme scheme) async {
+    final household = state.valueOrNull;
+    if (household == null) return;
+
+    await pb.collection('households').update(household.id, body: {
+      'rotation_scheme_type': scheme.type,
+      'rotation_pattern':     scheme.pattern,
     });
     ref.invalidateSelf();
   }

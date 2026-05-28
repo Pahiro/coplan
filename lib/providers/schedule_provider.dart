@@ -84,6 +84,7 @@ final resolvedDayProvider =
     rotationAnchor:        anchor,
     rotationParentEven:    evenName,
     rotationParentOdd:     oddName,
+    rotationScheme:        household?.rotationScheme,
   ).resolveDay(date);
 });
 
@@ -153,6 +154,7 @@ final weekEventsProvider =
       rotationAnchor:        anchor,
       rotationParentEven:    evenName,
       rotationParentOdd:     oddName,
+      rotationScheme:        household?.rotationScheme,
     ).resolveDay(date);
   }
   return result;

@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../models/app_colors.dart';
 import '../models/household.dart';
+import '../models/rotation_scheme.dart';
 import '../providers/auth_provider.dart';
 import '../providers/colors_provider.dart';
 import '../providers/household_provider.dart';
@@ -96,6 +97,18 @@ class SettingsScreen extends ConsumerWidget {
                   .read(colorsProvider.notifier)
                   .updateChildColor(child.id, c),
             )),
+            const SizedBox(height: 24),
+            _SectionHeader('Rotation scheme'),
+            Text(
+              'How custody days rotate between parents. '
+              'The anchor date marks Day 1 of the cycle.',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: Colors.grey),
+            ),
+            const SizedBox(height: 8),
+            _RotationSchemePicker(ref: ref),
             const SizedBox(height: 24),
             _SectionHeader('Recurring schedule'),
             Text(
@@ -328,4 +341,125 @@ class _ColorRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Dropdown to select a rotation scheme; persists choice to PocketBase.
+class _RotationSchemePicker extends StatelessWidget {
+  final WidgetRef ref;
+  const _RotationSchemePicker({required this.ref});
+
+  static final _presets = [
+    RotationScheme.weekly(),
+    RotationScheme.twoTwoFiveFive(),
+    RotationScheme.twoTwoThree(),
+    RotationScheme.alternatingWeekends(),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final household = ref.watch(householdProvider).valueOrNull;
+    final current = household?.rotationScheme ?? RotationScheme.weekly();
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DropdownButtonFormField<String>(
+              value: _presets.any((p) => p.type == current.type)
+                  ? current.type
+                  : 'weekly',
+              decoration: const InputDecoration(
+                labelText: 'Rotation pattern',
+                border: OutlineInputBorder(),
+              ),
+              items: _presets
+                  .map((s) => DropdownMenuItem(
+                        value: s.type,
+                        child: Text(s.label),
+                      ))
+                  .toList(),
+              onChanged: (type) {
+                if (type == null) return;
+                final scheme = RotationScheme.fromJson(type, null);
+                ref.read(householdProvider.notifier).updateRotationScheme(scheme);
+              },
+            ),
+            const SizedBox(height: 12),
+            Text(
+              current.description,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[600],
+                  ),
+            ),
+            const SizedBox(height: 12),
+            _CyclePreview(scheme: current, ref: ref),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Visual row showing the rotation cycle with coloured day dots.
+class _CyclePreview extends StatelessWidget {
+  final RotationScheme scheme;
+  final WidgetRef ref;
+  const _CyclePreview({required this.scheme, required this.ref});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
+    final household = ref.watch(householdProvider).valueOrNull;
+    final evenName = household?.rotationParentEvenName ?? 'A';
+    final oddName  = household?.rotationParentOddName  ?? 'B';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('${scheme.cycleLength}-day cycle',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 3,
+          runSpacing: 3,
+          children: List.generate(scheme.cycleLength, (i) {
+            final isEven = scheme.pattern[i] == 0;
+            final name = isEven ? evenName : oddName;
+            return Tooltip(
+              message: 'Day ${i + 1}: $name',
+              child: Container(
+                width: 18,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: colors.parentColor(name),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            _legendDot(colors.parentColor(evenName)),
+            const SizedBox(width: 4),
+            Text(evenName, style: const TextStyle(fontSize: 11)),
+            const SizedBox(width: 12),
+            _legendDot(colors.parentColor(oddName)),
+            const SizedBox(width: 4),
+            Text(oddName, style: const TextStyle(fontSize: 11)),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _legendDot(Color color) => Container(
+        width: 10,
+        height: 10,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      );
 }

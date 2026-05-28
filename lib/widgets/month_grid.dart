@@ -10,6 +10,7 @@ import '../models/recurring_arrangement.dart';
 import '../models/weekday_rule.dart';
 import '../providers/colors_provider.dart';
 import '../providers/custody_provider.dart';
+import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 
 /// Full-month colour-coded grid.
@@ -44,12 +45,17 @@ class MonthGrid extends ConsumerWidget {
             .toList() ??
         const <CustodyRequest>[];
 
+    final household = ref.watch(householdProvider).valueOrNull;
     final engine = ResolutionEngine(
         baseRules:             rules,
         overrides:             const [],
         custodyRequests:       custodyRequests,
         weekdayRules:          weekdayRules,
-        recurringArrangements: recurring);
+        recurringArrangements: recurring,
+        rotationAnchor:        household?.rotationAnchorDate ?? DateTime(2025, 1, 6),
+        rotationParentEven:    household?.rotationParentEvenName ?? 'Bennet',
+        rotationParentOdd:     household?.rotationParentOddName ?? 'Jana',
+        rotationScheme:        household?.rotationScheme);
 
     final firstOfMonth = DateTime(month.year, month.month, 1);
     final gridStart =

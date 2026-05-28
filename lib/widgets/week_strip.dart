@@ -10,6 +10,7 @@ import '../models/recurring_arrangement.dart';
 import '../models/weekday_rule.dart';
 import '../providers/colors_provider.dart';
 import '../providers/custody_provider.dart';
+import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 
 /// Horizontal 7-day strip for the calendar screen.
@@ -46,12 +47,17 @@ class WeekStrip extends ConsumerWidget {
       loading: () => const SizedBox(height: 72),
       error: (_, __) => const SizedBox(height: 72),
       data: (rules) {
+        final household = ref.watch(householdProvider).valueOrNull;
         final engine = ResolutionEngine(
             baseRules:             rules,
             overrides:             const [],
             custodyRequests:       custodyRequests,
             weekdayRules:          weekdayRules,
-            recurringArrangements: recurring);
+            recurringArrangements: recurring,
+            rotationAnchor:        household?.rotationAnchorDate ?? DateTime(2025, 1, 6),
+            rotationParentEven:    household?.rotationParentEvenName ?? 'Bennet',
+            rotationParentOdd:     household?.rotationParentOddName ?? 'Jana',
+            rotationScheme:        household?.rotationScheme);
         return SizedBox(
           height: 72,
           child: Row(

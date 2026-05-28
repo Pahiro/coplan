@@ -77,9 +77,32 @@ cronAdd("freezeRecurring", "5 0 * * *", () => {
                 if (!parentEvenName || !parentOddName) continue; // incomplete config
             }
 
-            const weekOwner = (d) => {
-                const weeks = Math.floor((mondayOf(d) - mondayOf(parse(anchorStr))) / (7 * DAY));
-                return (((weeks % 2) + 2) % 2) === 0 ? parentEvenName : parentOddName;
+            // Rotation scheme: pattern-based (mirrors Dart RotationScheme.ownerAtDay)
+            let rotationPattern = [0,0,0,0,0,0,0, 1,1,1,1,1,1,1]; // default weekly
+            if (!h._legacy) {
+                try {
+                    const schemeType = h.get("rotation_scheme_type") || "weekly";
+                    const stored = h.get("rotation_pattern");
+                    if (Array.isArray(stored) && stored.length > 0) {
+                        rotationPattern = stored;
+                    } else {
+                        // Use preset patterns for known types
+                        const presets = {
+                            "weekly":               [0,0,0,0,0,0,0, 1,1,1,1,1,1,1],
+                            "2-2-5-5":             [0,0, 1,1, 0,0,0,0,0, 1,1,1,1,1],
+                            "2-2-3":               [0,0, 1,1, 0,0,0, 1,1, 0,0, 1,1,1],
+                            "alternating_weekends": [0,0,0,0,0,0,0, 0,0,0,0,0,1,1],
+                        };
+                        rotationPattern = presets[schemeType] || rotationPattern;
+                    }
+                } catch (_) {}
+            }
+            const anchorDate = parse(anchorStr);
+            const rotationOwner = (d) => {
+                const daysSince = Math.floor((d - anchorDate) / DAY);
+                const len = rotationPattern.length;
+                const idx = ((daysSince % len) + len) % len;
+                return rotationPattern[idx] === 0 ? parentEvenName : parentOddName;
             };
 
             // Mirror the app engine's baseOwner: weekday rule > rotation.
@@ -93,7 +116,7 @@ cronAdd("freezeRecurring", "5 0 * * *", () => {
                     weekdayRuleMap[r.getInt("day_of_week")] = r.get("parent");
                 }
             } catch (_) {}
-            const baseOwner = (d) => weekdayRuleMap[isoDow(d)] || weekOwner(d);
+            const baseOwner = (d) => weekdayRuleMap[isoDow(d)] || rotationOwner(d);
 
             const userId = (name) => {
                 try { return dao.findFirstRecordByData("users", "name", name).id; }

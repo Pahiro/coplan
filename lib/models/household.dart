@@ -1,3 +1,7 @@
+import 'package:collection/collection.dart';
+
+import 'rotation_scheme.dart';
+
 /// A member of a household — parent or helper (e.g. grandparent).
 class HouseholdMember {
   final String id;
@@ -60,6 +64,7 @@ class HouseholdConfig {
   final String? rotationParentEvenId; // user id
   final String? rotationParentOddId;  // user id
   final String mode;                  // "custody" | "shared"
+  final RotationScheme rotationScheme;
   final List<HouseholdMember> members;
   final List<HouseholdChild> children;
 
@@ -70,6 +75,7 @@ class HouseholdConfig {
     this.rotationParentEvenId,
     this.rotationParentOddId,
     this.mode = 'custody',
+    this.rotationScheme = const RotationScheme(type: 'weekly', pattern: [0,0,0,0,0,0,0, 1,1,1,1,1,1,1]),
     this.members = const [],
     this.children = const [],
   });
@@ -123,14 +129,23 @@ class HouseholdConfig {
     Map<String, dynamic> j, {
     List<HouseholdMember> members = const [],
     List<HouseholdChild> children = const [],
-  }) => HouseholdConfig(
-    id:                     j['id'] as String,
-    name:                   j['name'] as String? ?? '',
-    rotationAnchor:         j['rotation_anchor'] as String? ?? '2026-05-18',
-    rotationParentEvenId:   j['rotation_parent_even'] as String?,
-    rotationParentOddId:    j['rotation_parent_odd'] as String?,
-    mode:                   j['mode'] as String? ?? 'custody',
-    members:                members,
-    children:               children,
-  );
+  }) {
+    final schemeType = j['rotation_scheme_type'] as String? ?? 'weekly';
+    List<int>? pattern;
+    final rawPattern = j['rotation_pattern'];
+    if (rawPattern is List) {
+      pattern = rawPattern.cast<int>();
+    }
+    return HouseholdConfig(
+      id:                     j['id'] as String,
+      name:                   j['name'] as String? ?? '',
+      rotationAnchor:         j['rotation_anchor'] as String? ?? '2026-05-18',
+      rotationParentEvenId:   j['rotation_parent_even'] as String?,
+      rotationParentOddId:    j['rotation_parent_odd'] as String?,
+      mode:                   j['mode'] as String? ?? 'custody',
+      rotationScheme:         RotationScheme.fromJson(schemeType, pattern),
+      members:                members,
+      children:               children,
+    );
+  }
 }

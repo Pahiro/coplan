@@ -11,6 +11,7 @@ import '../models/custody_request.dart';
 import '../models/manual_override.dart';
 import '../models/recurring_arrangement.dart';
 import '../models/resolved_event.dart';
+import '../models/rotation_scheme.dart';
 import '../models/weekday_rule.dart';
 
 /// Fetches the next upcoming events from PocketBase and writes them to
@@ -65,6 +66,7 @@ class WidgetCacheService {
         rotationAnchor:        rotation.$1,
         rotationParentEven:    rotation.$2,
         rotationParentOdd:     rotation.$3,
+        rotationScheme:        rotation.$4,
       ).resolveDay(date);
       events.addAll(dayEvents);
     }
@@ -134,9 +136,9 @@ class WidgetCacheService {
     }
   }
 
-  /// Fetches rotation anchor + parent names from the active household.
+  /// Fetches rotation anchor + parent names + scheme from the active household.
   /// Falls back to app_settings for legacy single-household setups.
-  static Future<(DateTime, String, String)> _fetchRotationConfig() async {
+  static Future<(DateTime, String, String, RotationScheme?)> _fetchRotationConfig() async {
     try {
       final userId = pb.authStore.record?.id ?? '';
       final user = await pb.collection('users').getOne(userId);
@@ -160,7 +162,15 @@ class WidgetCacheService {
           if (m.data['user'] == evenId) evenName = m.data['display_name'] as String? ?? evenName;
           if (m.data['user'] == oddId)  oddName  = m.data['display_name'] as String? ?? oddName;
         }
-        return (anchor, evenName, oddName);
+
+        // Rotation scheme
+        final schemeType = h.data['rotation_scheme_type'] as String? ?? 'weekly';
+        List<int>? pattern;
+        final rawPattern = h.data['rotation_pattern'];
+        if (rawPattern is List) pattern = rawPattern.cast<int>();
+        final scheme = RotationScheme.fromJson(schemeType, pattern);
+
+        return (anchor, evenName, oddName, scheme);
       }
     } catch (_) {}
 
@@ -176,9 +186,9 @@ class WidgetCacheService {
           }
         }
       }
-      return (anchor, AppConstants.parentBennet, AppConstants.parentJana);
+      return (anchor, AppConstants.parentBennet, AppConstants.parentJana, null);
     } catch (_) {
-      return (DateTime(2025, 1, 6), AppConstants.parentBennet, AppConstants.parentJana);
+      return (DateTime(2025, 1, 6), AppConstants.parentBennet, AppConstants.parentJana, null);
     }
   }
 }

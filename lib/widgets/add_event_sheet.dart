@@ -99,6 +99,7 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
           rotationAnchor: anchor,
           rotationParentEven: evenName,
           rotationParentOdd: oddName,
+          rotationScheme: household?.rotationScheme,
         ).dayOwner(_date);
         await ref.read(custodyRequestsProvider.notifier).createSharedEvent(
               targetDate:     DateFormat('yyyy-MM-dd').format(_date),
