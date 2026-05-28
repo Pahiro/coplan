@@ -26,7 +26,11 @@ class ResolutionEngine {
   final List<WeekdayRule>          weekdayRules;
   final List<RecurringArrangement> recurringArrangements;
 
-  const ResolutionEngine({
+  /// Per-date cache for [effectiveCustodyFor] to avoid recomputing the merged
+  /// real + virtual custody list multiple times per [resolveDay] pass.
+  final Map<int, List<CustodyRequest>> _custodyCache = {};
+
+  ResolutionEngine({
     required this.baseRules,
     required this.overrides,
     this.custodyRequests       = const [],
@@ -65,12 +69,22 @@ class ResolutionEngine {
   /// All accepted custody for [date]: real records plus virtual occurrences
   /// expanded from recurring arrangements.  This is the single source the rest
   /// of the engine reasons over, so every surface sees recurring transfers.
+  ///
+  /// Results are cached per date within this engine instance to avoid redundant
+  /// recomputation across [parentAtTime], [_custodyNoteAt], etc. (ISSUES #7).
   List<CustodyRequest> effectiveCustodyFor(DateTime date) {
+    final key = date.year * 10000 + date.month * 100 + date.day;
+    final cached = _custodyCache[key];
+    if (cached != null) return cached;
+
     final real = custodyRequests
         .where((r) => r.isAccepted && _sameDay(r.date, date))
         .toList();
-    if (recurringArrangements.isEmpty) return real;
-    return [...real, ..._virtualRecurringFor(date, real)];
+    final result = recurringArrangements.isEmpty
+        ? real
+        : [...real, ..._virtualRecurringFor(date, real)];
+    _custodyCache[key] = result;
+    return result;
   }
 
   /// The effective day-transfer (real or virtual recurring) for [date], if any.
@@ -89,20 +103,21 @@ class ResolutionEngine {
     if (d.isBefore(todayDate)) return const [];
 
     final out = <CustodyRequest>[];
+    final dayBaseOwner = baseOwner(date);
     for (final a in recurringArrangements) {
       if (!a.active) continue;
       if (a.dayOfWeek != date.weekday) continue;
       final start = DateTime(a.startDate.year, a.startDate.month, a.startDate.day);
       if (d.isBefore(start)) continue;
       // Conditional: skip weeks where the recipient already owns the day.
-      if (baseOwner(date) == parentFromString(a.toParent)) continue;
+      if (dayBaseOwner == parentFromString(a.toParent)) continue;
       // Suppress when a one-off request already covers this date + child.
       final covered = realForDate.any((r) =>
           r.childName == a.childName ||
           r.childName == 'All' ||
           a.childName == 'All');
       if (covered) continue;
-      out.add(a.toVirtualRequest(date, fromParent: baseOwner(date).displayName));
+      out.add(a.toVirtualRequest(date, fromParent: dayBaseOwner.displayName));
     }
     return out;
   }
@@ -236,7 +251,7 @@ class ResolutionEngine {
     final override = overrides.firstWhereOrNull((o) =>
         !o.isAdhoc &&
         _sameDay(o.targetDate, date) &&
-        (o.childName == rule.childName || o.childName == 'All'));
+        (o.childName == rule.childName || o.childName == 'All' || rule.childName == 'All'));
 
     final eventTime = _parseTime(override?.overrideTime ?? rule.eventTime);
 
@@ -264,6 +279,10 @@ class ResolutionEngine {
     final note        = _custodyNoteAt(date, eventTime);
     final actualParent =
         note != null ? parentAtTime(date, eventTime) : scheduleParent;
+    // When a custody request changes the parent, drop the manual-override
+    // reason — showing the override's reason with the custody parent is
+    // confusing mixed provenance (see ISSUES.md #3).
+    final actualReason = note != null ? null : scheduleReason;
 
     return ResolvedEvent(
       date:           date,
@@ -272,7 +291,7 @@ class ResolutionEngine {
       location:       rule.location,
       childName:      rule.childName,
       assignedParent: actualParent,
-      overrideReason: scheduleReason,
+      overrideReason: actualReason,
       isShared:       rule.isShared,
       ruleId:         rule.id,
       overrideId:     override?.id,

@@ -138,7 +138,7 @@ class _CustodyRequestEditSheetState
             note:             _noteCtrl.text.isEmpty ? null : _noteCtrl.text,
           );
         } else {
-          await recurring.deleteForDay(_date.weekday);
+          await recurring.deleteForDay(_date.weekday, toParent: widget.request.toParent);
         }
       }
 

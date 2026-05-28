@@ -17,8 +17,12 @@ extension ParentX on Parent {
       this == Parent.bennet ? const Color(0xFFBBDEFB) : const Color(0xFFFCE4EC);
 }
 
-Parent parentFromString(String s) =>
-    s == AppConstants.parentBennet ? Parent.bennet : Parent.jana;
+Parent parentFromString(String s) {
+  if (s == AppConstants.parentBennet) return Parent.bennet;
+  if (s == AppConstants.parentJana) return Parent.jana;
+  throw ArgumentError('Unknown parent name "$s" — expected '
+      '"${AppConstants.parentBennet}" or "${AppConstants.parentJana}"');
+}
 
 class ResolvedEvent {
   final DateTime date;

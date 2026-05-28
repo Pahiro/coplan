@@ -340,12 +340,16 @@ class RecurringArrangementsNotifier extends AsyncNotifier<void> {
     _invalidate();
   }
 
-  /// Removes every arrangement for a given weekday (used by the repeat toggle).
-  Future<void> deleteForDay(int dayOfWeek) async {
+  /// Removes arrangements for a given weekday, optionally scoped to a specific
+  /// recipient [toParent]. Without [toParent] all arrangements on that weekday
+  /// are deleted (current two-parent behaviour).
+  Future<void> deleteForDay(int dayOfWeek, {String? toParent}) async {
     try {
+      var filter = 'day_of_week = $dayOfWeek';
+      if (toParent != null) filter += ' && to_parent = "$toParent"';
       final existing = await pb
           .collection('custody_recurring')
-          .getFullList(filter: 'day_of_week = $dayOfWeek');
+          .getFullList(filter: filter);
       for (final r in existing) {
         await pb.collection('custody_recurring').delete(r.id);
       }

@@ -118,13 +118,11 @@ class MonthGrid extends ConsumerWidget {
                     // Partial overlap OR window ends at a known time → split.
                     windowToColor = colors.parentColor(windowParent);
                   }
-                } else {
-                  // Partial-day transfer (pickup after midnight) → split.
-                  // Use fromParent/toParent directly — avoids weekday rules
-                  // incorrectly overriding the "before handover" half when the
-                  // standing rule and the same-day transfer point to the same
-                  // parent.  dayTransferFor() also surfaces virtual recurring
-                  // occurrences so future weeks render the same split.
+                }
+
+                // Also check for a partial-day transfer — handles both the
+                // window-only and window+transfer cases (ISSUES #6.1).
+                if (windowToColor == null) {
                   final transfer = engine.dayTransferFor(date);
                   if (transfer != null) {
                     final p = transfer.pickupTime.split(':');
