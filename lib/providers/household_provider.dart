@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/pb_client.dart';
@@ -93,6 +95,14 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
 
     ref.invalidateSelf();
     return hRecord.id;
+  }
+
+  /// Rename the current household.
+  Future<void> updateName(String name) async {
+    final household = state.valueOrNull;
+    if (household == null) return;
+    await pb.collection('households').update(household.id, body: {'name': name});
+    ref.invalidateSelf();
   }
 
   /// Add a child to the current household.
@@ -222,12 +232,14 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
   }
 
   String _generateCode() {
+    // Unambiguous charset (no 0/O/1/I). Cryptographically random so codes
+    // can't be guessed or collide when generated close together.
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    final r = DateTime.now().millisecondsSinceEpoch;
+    final rand = Random.secure();
     final buf = StringBuffer();
     for (var i = 0; i < 8; i++) {
       if (i == 4) buf.write('-');
-      buf.write(chars[(r ~/ (i + 1) + i * 7) % chars.length]);
+      buf.write(chars[rand.nextInt(chars.length)]);
     }
     return buf.toString();
   }

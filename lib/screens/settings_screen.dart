@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../models/app_colors.dart';
-import '../models/household.dart';
 import '../models/rotation_scheme.dart';
 import '../providers/auth_provider.dart';
 import '../providers/colors_provider.dart';
@@ -67,6 +67,11 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ),
             ),
+            // ── Household ──────────────────────────────────────────────────
+            _SectionHeader('Household'),
+            const _HouseholdSection(),
+            const SizedBox(height: 24),
+
             _SectionHeader('Parent colours'),
 
             // Dynamic parent colour rows from household data
@@ -180,6 +185,204 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── Household management ──────────────────────────────────────────────────────
+
+class _HouseholdSection extends ConsumerWidget {
+  const _HouseholdSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
+    final household = ref.watch(householdProvider).valueOrNull;
+
+    if (household == null) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Text('No active household.',
+              style: TextStyle(color: Colors.grey)),
+        ),
+      );
+    }
+
+    final members = household.members;
+
+    return Card(
+      child: Column(
+        children: [
+          // Name + rename
+          ListTile(
+            leading: const Icon(Icons.home_outlined),
+            title: Text(household.name.isEmpty ? 'Household' : household.name,
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Text('${household.parents.length} parent(s)'
+                '${household.helpers.isNotEmpty ? ', ${household.helpers.length} helper(s)' : ''}'),
+            trailing: TextButton(
+              onPressed: () => _rename(context, ref, household.name),
+              child: const Text('Rename'),
+            ),
+          ),
+          const Divider(height: 1),
+
+          // Members
+          ...members.map((m) => ListTile(
+                dense: true,
+                leading: CircleAvatar(
+                  radius: 16,
+                  backgroundColor: m.isParent
+                      ? colors.parentLightColor(m.displayName)
+                      : Colors.grey.shade200,
+                  child: Text(
+                    m.displayName.isNotEmpty ? m.displayName[0] : '?',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: m.isParent
+                          ? colors.parentColor(m.displayName)
+                          : Colors.grey.shade700,
+                    ),
+                  ),
+                ),
+                title: Text(m.displayName),
+                trailing: Chip(
+                  label: Text(m.isParent ? 'Parent' : 'Helper',
+                      style: const TextStyle(fontSize: 11)),
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: EdgeInsets.zero,
+                ),
+              )),
+          const Divider(height: 1),
+
+          // Invite actions
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.person_add_outlined, size: 18),
+                    label: const Text('Invite parent'),
+                    onPressed: () => _invite(context, ref, 'parent'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.group_add_outlined, size: 18),
+                    label: const Text('Invite helper'),
+                    onPressed: () => _invite(context, ref, 'helper'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _rename(
+      BuildContext context, WidgetRef ref, String current) async {
+    final ctrl = TextEditingController(text: current);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Rename household'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Household name',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (v) => Navigator.pop(context, v),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, ctrl.text),
+              child: const Text('Save')),
+        ],
+      ),
+    );
+    if (name != null && name.trim().isNotEmpty) {
+      await ref.read(householdProvider.notifier).updateName(name.trim());
+    }
+  }
+
+  Future<void> _invite(
+      BuildContext context, WidgetRef ref, String role) async {
+    String code;
+    try {
+      code = await ref.read(householdProvider.notifier).createInvite(role: role);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Could not create invite: $e')));
+      }
+      return;
+    }
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Invite ${role == 'parent' ? 'a parent' : 'a helper'}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Share this code. They sign up, then choose '
+                '"Join with invite code" and enter it.'),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              alignment: Alignment.center,
+              child: SelectableText(
+                code,
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 2,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text('Expires in 72 hours.',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.grey)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Done'),
+          ),
+          FilledButton.icon(
+            icon: const Icon(Icons.copy, size: 16),
+            label: const Text('Copy code'),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: code));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Invite code copied')),
+              );
+            },
+          ),
+        ],
       ),
     );
   }
