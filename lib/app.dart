@@ -125,7 +125,7 @@ class _MainShellState extends ConsumerState<_MainShell> {
               ),
             ),
           IconButton(
-            icon: const Icon(Icons.palette_outlined),
+            icon: const Icon(Icons.settings_outlined),
             tooltip: 'Settings',
             onPressed: () => Navigator.push(
               context,

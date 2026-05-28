@@ -73,10 +73,11 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
     final auth = ref.read(authProvider).valueOrNull;
     final userId = auth?.userId ?? '';
 
-    // Create household
+    // Create household (creator becomes the owner)
     final hRecord = await pb.collection('households').create(body: {
       'name': name,
       'mode': 'custody',
+      'owner': userId,
     });
 
     // Add current user as parent member
@@ -95,6 +96,13 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
 
     ref.invalidateSelf();
     return hRecord.id;
+  }
+
+  /// Remove a member (parent or helper) from the current household.
+  /// Intended for the household owner; the owner cannot be removed.
+  Future<void> removeMember(String memberId) async {
+    await pb.collection('household_members').delete(memberId);
+    ref.invalidateSelf();
   }
 
   /// Rename the current household.

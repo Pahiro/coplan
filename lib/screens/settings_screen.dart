@@ -203,6 +203,8 @@ class _HouseholdSection extends ConsumerWidget {
     }
 
     final members = household.members;
+    final myId = ref.watch(authProvider).valueOrNull?.userId ?? '';
+    final iAmOwner = household.isOwnedBy(myId);
 
     return Card(
       child: Column(
@@ -241,12 +243,29 @@ class _HouseholdSection extends ConsumerWidget {
                   ),
                 ),
                 title: Text(m.displayName),
-                trailing: Chip(
-                  label: Text(m.isParent ? 'Parent' : 'Helper',
-                      style: const TextStyle(fontSize: 11)),
-                  visualDensity: VisualDensity.compact,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding: EdgeInsets.zero,
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Chip(
+                      label: Text(
+                        m.userId == household.ownerId
+                            ? 'Owner'
+                            : (m.isParent ? 'Parent' : 'Helper'),
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: EdgeInsets.zero,
+                    ),
+                    if (iAmOwner && m.userId != household.ownerId)
+                      IconButton(
+                        icon: const Icon(Icons.person_remove_outlined,
+                            color: Colors.red),
+                        tooltip: 'Remove ${m.displayName}',
+                        onPressed: () =>
+                            _removeMember(context, ref, m.id, m.displayName),
+                      ),
+                  ],
                 ),
               )),
           const Divider(height: 1),
@@ -307,6 +326,32 @@ class _HouseholdSection extends ConsumerWidget {
     );
     if (name != null && name.trim().isNotEmpty) {
       await ref.read(householdProvider.notifier).updateName(name.trim());
+    }
+  }
+
+  Future<void> _removeMember(
+      BuildContext context, WidgetRef ref, String memberId, String name) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Remove $name?'),
+        content: Text(
+            '$name will be removed from this household and will lose access to '
+            'its schedule. This does not delete their account.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await ref.read(householdProvider.notifier).removeMember(memberId);
     }
   }
 

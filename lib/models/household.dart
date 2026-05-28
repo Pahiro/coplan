@@ -63,6 +63,7 @@ class HouseholdConfig {
   final String rotationAnchor;       // "YYYY-MM-DD"
   final String? rotationParentEvenId; // user id
   final String? rotationParentOddId;  // user id
+  final String? ownerId;              // user id allowed to manage membership
   final String mode;                  // "custody" | "shared"
   final RotationScheme rotationScheme;
   final List<HouseholdMember> members;
@@ -74,11 +75,15 @@ class HouseholdConfig {
     this.rotationAnchor = '2026-05-18',
     this.rotationParentEvenId,
     this.rotationParentOddId,
+    this.ownerId,
     this.mode = 'custody',
     this.rotationScheme = const RotationScheme(type: 'weekly', pattern: [0,0,0,0,0,0,0, 1,1,1,1,1,1,1]),
     this.members = const [],
     this.children = const [],
   });
+
+  /// True when [userId] is the household owner (may remove members).
+  bool isOwnedBy(String userId) => ownerId != null && ownerId == userId;
 
   /// The two parents (role == "parent") in this household.
   List<HouseholdMember> get parents =>
@@ -142,6 +147,7 @@ class HouseholdConfig {
       rotationAnchor:         j['rotation_anchor'] as String? ?? '2026-05-18',
       rotationParentEvenId:   j['rotation_parent_even'] as String?,
       rotationParentOddId:    j['rotation_parent_odd'] as String?,
+      ownerId:                j['owner'] as String?,
       mode:                   j['mode'] as String? ?? 'custody',
       rotationScheme:         RotationScheme.fromJson(schemeType, pattern),
       members:                members,
