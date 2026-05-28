@@ -283,7 +283,10 @@ class _RequestSheetState extends ConsumerState<_RequestSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('New custody request',
+            Text(
+                ref.read(householdProvider).valueOrNull?.mode == 'shared'
+                    ? 'New pickup request'
+                    : 'New custody request',
                 style: Theme.of(context)
                     .textTheme
                     .titleLarge

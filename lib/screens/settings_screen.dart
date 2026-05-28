@@ -98,30 +98,71 @@ class SettingsScreen extends ConsumerWidget {
                   .updateChildColor(child.id, c),
             )),
             const SizedBox(height: 24),
-            _SectionHeader('Rotation scheme'),
-            Text(
-              'How custody days rotate between parents. '
-              'The anchor date marks Day 1 of the cycle.',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: Colors.grey),
+            _SectionHeader('Household mode'),
+            Card(
+              margin: const EdgeInsets.only(bottom: 16),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(
+                          value: 'custody',
+                          icon: Icon(Icons.swap_horiz, size: 18),
+                          label: Text('Custody'),
+                        ),
+                        ButtonSegment(
+                          value: 'shared',
+                          icon: Icon(Icons.people_outline, size: 18),
+                          label: Text('Shared'),
+                        ),
+                      ],
+                      selected: {ref.watch(householdProvider).valueOrNull?.mode ?? 'custody'},
+                      onSelectionChanged: (s) =>
+                          ref.read(householdProvider.notifier).updateMode(s.first),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      ref.watch(householdProvider).valueOrNull?.mode == 'shared'
+                          ? 'Both parents are always responsible. '
+                            'Use requests to coordinate who handles pickups.'
+                          : 'Days rotate between parents by the scheme below. '
+                            'Requests transfer custody for a day or time window.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
             ),
-            const SizedBox(height: 8),
-            _RotationSchemePicker(ref: ref),
-            const SizedBox(height: 24),
-            _SectionHeader('Recurring schedule'),
-            Text(
-              'Standing weekday custody rules — these override the week rotation '
-              'every week for that day. Created via the "Repeat every …" toggle '
-              'on a pickup or drop-off request.',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: Colors.grey),
-            ),
-            const SizedBox(height: 8),
-            const _RecurringRulesSection(),
+            // Only show rotation settings in custody mode
+            if ((ref.watch(householdProvider).valueOrNull?.mode ?? 'custody') == 'custody') ...[
+              _SectionHeader('Rotation scheme'),
+              Text(
+                'How custody days rotate between parents. '
+                'The anchor date marks Day 1 of the cycle.',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.grey),
+              ),
+              const SizedBox(height: 8),
+              _RotationSchemePicker(ref: ref),
+              const SizedBox(height: 24),
+              _SectionHeader('Recurring schedule'),
+              Text(
+                'Standing weekday custody rules — these override the week rotation '
+                'every week for that day. Created via the "Repeat every …" toggle '
+                'on a pickup or drop-off request.',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.grey),
+              ),
+              const SizedBox(height: 8),
+              const _RecurringRulesSection(),
+            ], // end custody-only section
           ],
         ),
       ),

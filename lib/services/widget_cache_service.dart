@@ -67,6 +67,7 @@ class WidgetCacheService {
         rotationParentEven:    rotation.$2,
         rotationParentOdd:     rotation.$3,
         rotationScheme:        rotation.$4,
+        householdMode:         rotation.$5,
       ).resolveDay(date);
       events.addAll(dayEvents);
     }
@@ -138,7 +139,7 @@ class WidgetCacheService {
 
   /// Fetches rotation anchor + parent names + scheme from the active household.
   /// Falls back to app_settings for legacy single-household setups.
-  static Future<(DateTime, String, String, RotationScheme?)> _fetchRotationConfig() async {
+  static Future<(DateTime, String, String, RotationScheme?, String)> _fetchRotationConfig() async {
     try {
       final userId = pb.authStore.record?.id ?? '';
       final user = await pb.collection('users').getOne(userId);
@@ -170,7 +171,8 @@ class WidgetCacheService {
         if (rawPattern is List) pattern = rawPattern.cast<int>();
         final scheme = RotationScheme.fromJson(schemeType, pattern);
 
-        return (anchor, evenName, oddName, scheme);
+        final mode = h.data['mode'] as String? ?? 'custody';
+        return (anchor, evenName, oddName, scheme, mode);
       }
     } catch (_) {}
 
@@ -186,9 +188,9 @@ class WidgetCacheService {
           }
         }
       }
-      return (anchor, AppConstants.parentBennet, AppConstants.parentJana, null);
+      return (anchor, AppConstants.parentBennet, AppConstants.parentJana, null, 'custody');
     } catch (_) {
-      return (DateTime(2025, 1, 6), AppConstants.parentBennet, AppConstants.parentJana, null);
+      return (DateTime(2025, 1, 6), AppConstants.parentBennet, AppConstants.parentJana, null, 'custody');
     }
   }
 }

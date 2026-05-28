@@ -146,6 +146,17 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
     ref.invalidateSelf();
   }
 
+  /// Switch household mode between "custody" and "shared".
+  Future<void> updateMode(String mode) async {
+    final household = state.valueOrNull;
+    if (household == null) return;
+
+    await pb.collection('households').update(household.id, body: {
+      'mode': mode,
+    });
+    ref.invalidateSelf();
+  }
+
   /// Generate an invite code for this household.
   Future<String> createInvite({required String role}) async {
     final household = state.valueOrNull;

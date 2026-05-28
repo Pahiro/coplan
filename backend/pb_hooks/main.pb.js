@@ -97,8 +97,13 @@ cronAdd("freezeRecurring", "5 0 * * *", () => {
                     }
                 } catch (_) {}
             }
+            // Household mode: shared means no rotation — "Both" own every day
+            const householdMode = h._legacy ? "custody" : (h.get("mode") || "custody");
+            const isShared = householdMode === "shared";
+
             const anchorDate = parse(anchorStr);
             const rotationOwner = (d) => {
+                if (isShared) return "Both";
                 const daysSince = Math.floor((d - anchorDate) / DAY);
                 const len = rotationPattern.length;
                 const idx = ((daysSince % len) + len) % len;
@@ -116,7 +121,10 @@ cronAdd("freezeRecurring", "5 0 * * *", () => {
                     weekdayRuleMap[r.getInt("day_of_week")] = r.get("parent");
                 }
             } catch (_) {}
-            const baseOwner = (d) => weekdayRuleMap[isoDow(d)] || rotationOwner(d);
+            const baseOwner = (d) => {
+                if (isShared) return "Both";
+                return weekdayRuleMap[isoDow(d)] || rotationOwner(d);
+            };
 
             const userId = (name) => {
                 try { return dao.findFirstRecordByData("users", "name", name).id; }

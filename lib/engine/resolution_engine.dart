@@ -38,6 +38,10 @@ class ResolutionEngine {
   /// The rotation pattern scheme (default: weekly 7/7).
   final RotationScheme rotationScheme;
 
+  /// Household mode: "custody" (rotation) or "shared" (no rotation, both
+  /// parents responsible by default).
+  final String householdMode;
+
   /// Per-date cache for [effectiveCustodyFor] to avoid recomputing the merged
   /// real + virtual custody list multiple times per [resolveDay] pass.
   final Map<int, List<CustodyRequest>> _custodyCache = {};
@@ -49,24 +53,32 @@ class ResolutionEngine {
     required this.rotationParentEven,
     required this.rotationParentOdd,
     RotationScheme? rotationScheme,
+    this.householdMode         = 'custody',
     this.custodyRequests       = const [],
     this.weekdayRules          = const [],
     this.recurringArrangements = const [],
   }) : rotationScheme = rotationScheme ?? RotationScheme.weekly();
+
+  /// True when this engine operates in shared-household mode (no rotation).
+  bool get isSharedMode => householdMode == 'shared';
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
   /// The day owner from weekday rules or base rotation only, ignoring any
   /// accepted day-transfer custody request. Used for split-colour rendering
   /// when a transfer pickup falls mid-day.
-  String baseOwner(DateTime date) =>
-      _weekdayRuleParent(date.weekday) ?? weekOwner(date);
+  String baseOwner(DateTime date) {
+    if (isSharedMode) return 'Both';
+    return _weekdayRuleParent(date.weekday) ?? weekOwner(date);
+  }
 
   /// Returns the rotation parent for [date] based on the configured scheme.
   ///
   /// Uses UTC epoch math so that DST transitions never shift [Duration.inDays]
   /// and flip the parity (see ISSUES.md #1).
+  /// In shared mode, returns "Both" (no rotation applies).
   String weekOwner(DateTime date) {
+    if (isSharedMode) return 'Both';
     final dateUtc   = DateTime.utc(date.year, date.month, date.day);
     final anchorUtc = DateTime.utc(rotationAnchor.year, rotationAnchor.month, rotationAnchor.day);
     final daysSince = (dateUtc.millisecondsSinceEpoch - anchorUtc.millisecondsSinceEpoch) ~/ 86400000;
@@ -76,9 +88,11 @@ class ResolutionEngine {
   /// The primary responsible parent for an entire day.
   ///
   /// Priority: accepted day-transfer request > weekday rule > week rotation.
+  /// In shared mode: transfers still apply, but no rotation/weekday rules.
   String dayOwner(DateTime date) {
     final transfer = dayTransferFor(date);
     if (transfer != null) return transfer.toParent;
+    if (isSharedMode) return 'Both';
     return _weekdayRuleParent(date.weekday) ?? weekOwner(date);
   }
 

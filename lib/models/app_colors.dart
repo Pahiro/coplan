@@ -15,8 +15,11 @@ class AppColors {
        _childColors  = childColors;
 
   /// Accent colour for a parent by display name.
-  Color parentColor(String parentName) =>
-      _parentColors[parentName] ?? Colors.blueGrey;
+  /// "Both" returns a neutral purple for shared-mode days.
+  Color parentColor(String parentName) {
+    if (parentName == 'Both') return const Color(0xFF7E57C2); // purple 400
+    return _parentColors[parentName] ?? Colors.blueGrey;
+  }
 
   /// Soft background tint for a parent.
   Color parentLightColor(String parentName) =>

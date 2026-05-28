@@ -55,7 +55,8 @@ class MonthGrid extends ConsumerWidget {
         rotationAnchor:        household?.rotationAnchorDate ?? DateTime(2025, 1, 6),
         rotationParentEven:    household?.rotationParentEvenName ?? 'Bennet',
         rotationParentOdd:     household?.rotationParentOddName ?? 'Jana',
-        rotationScheme:        household?.rotationScheme);
+        rotationScheme:        household?.rotationScheme,
+        householdMode:         household?.mode ?? 'custody');
 
     final firstOfMonth = DateTime(month.year, month.month, 1);
     final gridStart =

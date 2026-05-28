@@ -57,7 +57,8 @@ class WeekStrip extends ConsumerWidget {
             rotationAnchor:        household?.rotationAnchorDate ?? DateTime(2025, 1, 6),
             rotationParentEven:    household?.rotationParentEvenName ?? 'Bennet',
             rotationParentOdd:     household?.rotationParentOddName ?? 'Jana',
-            rotationScheme:        household?.rotationScheme);
+            rotationScheme:        household?.rotationScheme,
+            householdMode:         household?.mode ?? 'custody');
         return SizedBox(
           height: 72,
           child: Row(

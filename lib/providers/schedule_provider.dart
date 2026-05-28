@@ -85,6 +85,7 @@ final resolvedDayProvider =
     rotationParentEven:    evenName,
     rotationParentOdd:     oddName,
     rotationScheme:        household?.rotationScheme,
+    householdMode:         household?.mode ?? 'custody',
   ).resolveDay(date);
 });
 
@@ -155,6 +156,7 @@ final weekEventsProvider =
       rotationParentEven:    evenName,
       rotationParentOdd:     oddName,
       rotationScheme:        household?.rotationScheme,
+      householdMode:         household?.mode ?? 'custody',
     ).resolveDay(date);
   }
   return result;
