@@ -54,6 +54,10 @@ class CustodyRequestsNotifier
   /// Omit [returnTime] and leave [returnTimeTbd] false for a day transfer
   /// (no return expected — kids stay overnight). Set [returnTimeTbd] for a
   /// window where the return time is yet to be confirmed.
+  /// When [recipientUserId] and [recipientName] are supplied, the request is
+  /// directed at that specific member (e.g. a helper) instead of the co-parent:
+  /// the current user hands the kids to them. Helper requests are always
+  /// one-off (repeatWeekly is ignored).
   Future<void> createRequest({
     required bool iAmTaking,
     required String date,
@@ -66,17 +70,33 @@ class CustodyRequestsNotifier
     String? repeatReason,
     bool toParentCollects = true,
     bool toParentReturns  = false,
+    String? recipientUserId,
+    String? recipientName,
   }) async {
     final auth      = ref.read(authProvider).valueOrNull;
     final myId      = auth?.userId ?? '';
     final myName    = auth?.userName?.trim() ?? 'Parent';
-    final otherName = _otherParentName(myName);
+    final householdId = ref.read(householdProvider).valueOrNull?.id;
 
-    final otherId = await otherParentId();
+    final bool isHelperRequest =
+        recipientUserId != null && recipientName != null;
+
+    final String fromParent, toParent, requestedFrom;
+    if (isHelperRequest) {
+      // Current user hands the kids to the named recipient (helper).
+      fromParent    = myName;
+      toParent      = recipientName;
+      requestedFrom = recipientUserId;
+    } else {
+      final otherName = _otherParentName(myName);
+      fromParent    = iAmTaking ? otherName : myName;
+      toParent      = iAmTaking ? myName    : otherName;
+      requestedFrom = await otherParentId();
+    }
 
     final body = {
-      'from_parent':       iAmTaking ? otherName : myName,
-      'to_parent':         iAmTaking ? myName    : otherName,
+      'from_parent':       fromParent,
+      'to_parent':         toParent,
       'date':              date,
       'child_name':        childName,
       'pickup_time':       pickupTime,
@@ -85,9 +105,10 @@ class CustodyRequestsNotifier
       'status':            'pending',
       'note':              note ?? '',
       'created_by':        myId,
-      'requested_from':    otherId,
+      'requested_from':    requestedFrom,
       'to_parent_collects': toParentCollects,
       'to_parent_returns':  toParentReturns,
+      if (householdId != null) 'household': householdId,
     };
 
     try {
@@ -106,15 +127,15 @@ class CustodyRequestsNotifier
     ref.invalidateSelf();
     ref.invalidate(dashboardProvider);
 
-    if (repeatWeekly) {
+    // Recurring is parent-only; helper pickups are always one-off.
+    if (repeatWeekly && !isHelperRequest) {
       final date_ = DateTime.parse(date);
-      final assignedParent = iAmTaking ? myName : otherName;
       final reason = (repeatReason?.isNotEmpty ?? false)
           ? repeatReason!
           : '${iAmTaking ? "Weekly pickup" : "Weekly transfer"} by $myName';
       await ref.read(weekdayRulesNotifierProvider.notifier).create(
             dayOfWeek:      date_.weekday,
-            assignedParent: assignedParent,
+            assignedParent: toParent,
             reason:         reason,
           );
     }

@@ -154,6 +154,9 @@ class _RequestSheetState extends ConsumerState<_RequestSheet> {
   bool     _sending  = false;
 
   // ── Custody fields ────────────────────────────────────────────────────────
+  /// Recipient of the request: '__parent__' = the co-parent (rotation flow),
+  /// otherwise a helper's user id.
+  String     _recipientKey     = '__parent__';
   bool       _iAmTaking        = true;  // direction: I take / they take
   bool       _hasReturnTime    = false; // false = day transfer, true = window
   TimeOfDay? _pickupTime;
@@ -218,6 +221,19 @@ class _RequestSheetState extends ConsumerState<_RequestSheet> {
   Future<void> _sendCustody() async {
     setState(() => _sending = true);
     try {
+      // Resolve a helper recipient, if one was selected.
+      String? recipientUserId;
+      String? recipientName;
+      if (_recipientKey != '__parent__') {
+        final household = ref.read(householdProvider).valueOrNull;
+        final helper = household?.helpers
+            .where((h) => h.userId == _recipientKey)
+            .firstOrNull;
+        recipientUserId = helper?.userId;
+        recipientName   = helper?.displayName;
+      }
+      final isHelper = recipientUserId != null;
+
       await ref.read(custodyRequestsProvider.notifier).createRequest(
             iAmTaking:        _iAmTaking,
             date:             _isoDate(_date),
@@ -228,10 +244,12 @@ class _RequestSheetState extends ConsumerState<_RequestSheet> {
                                   : null,
             returnTimeTbd:    _hasReturnTime && _returnTimeTbd,
             note:             _noteCtrl.text.isEmpty ? null : _noteCtrl.text,
-            repeatWeekly:     _repeatWeekly && !_hasReturnTime,
+            repeatWeekly:     !isHelper && _repeatWeekly && !_hasReturnTime,
             repeatReason:     _noteCtrl.text.isNotEmpty ? _noteCtrl.text : null,
             toParentCollects: _toParentCollects,
             toParentReturns:  _toParentReturns,
+            recipientUserId:  recipientUserId,
+            recipientName:    recipientName,
           );
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -302,29 +320,69 @@ class _RequestSheetState extends ConsumerState<_RequestSheet> {
   // ── Custody form ──────────────────────────────────────────────────────────
 
   Widget _buildCustodyForm(String myName, String otherName) {
+    final household  = ref.read(householdProvider).valueOrNull;
+    final helpers    = household?.helpers ?? const [];
+    final isHelper   = _recipientKey != '__parent__';
+    final helperName = isHelper
+        ? (helpers
+                .where((h) => h.userId == _recipientKey)
+                .map((h) => h.displayName)
+                .firstOrNull ??
+            'Helper')
+        : '';
+    // Who ends up with the kids (toName) vs who releases them (fromName).
+    final toName   = isHelper ? helperName : (_iAmTaking ? myName : otherName);
+    final fromName = isHelper ? myName : (_iAmTaking ? otherName : myName);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Direction: who ends up with the kids
-        SegmentedButton<bool>(
-          segments: [
-            ButtonSegment(
-                value: true,
-                icon: const Icon(Icons.arrow_forward, size: 16),
-                label: Text('$myName takes them')),
-            ButtonSegment(
-                value: false,
-                icon: const Icon(Icons.arrow_back, size: 16),
-                label: Text('$otherName takes them')),
-          ],
-          selected: {_iAmTaking},
-          onSelectionChanged: (s) => setState(() {
-            _iAmTaking = s.first;
-            _toParentCollects = true;
-            _toParentReturns  = false;
-          }),
-        ),
-        const SizedBox(height: 16),
+        // Recipient: co-parent (rotation) or a helper
+        if (helpers.isNotEmpty) ...[
+          DropdownButtonFormField<String>(
+            value: _recipientKey,
+            decoration: const InputDecoration(
+              labelText: 'Who has the kids?',
+              border: OutlineInputBorder(),
+            ),
+            items: [
+              DropdownMenuItem(
+                  value: '__parent__', child: Text('$otherName (co-parent)')),
+              ...helpers.map((h) => DropdownMenuItem(
+                  value: h.userId, child: Text('${h.displayName} (helper)'))),
+            ],
+            onChanged: (v) => setState(() {
+              _recipientKey = v ?? '__parent__';
+              _toParentCollects = true;
+              _toParentReturns  = false;
+              if (_recipientKey != '__parent__') _repeatWeekly = false;
+            }),
+          ),
+          const SizedBox(height: 16),
+        ],
+
+        // Direction: who ends up with the kids (co-parent requests only)
+        if (!isHelper) ...[
+          SegmentedButton<bool>(
+            segments: [
+              ButtonSegment(
+                  value: true,
+                  icon: const Icon(Icons.arrow_forward, size: 16),
+                  label: Text('$myName takes them')),
+              ButtonSegment(
+                  value: false,
+                  icon: const Icon(Icons.arrow_back, size: 16),
+                  label: Text('$otherName takes them')),
+            ],
+            selected: {_iAmTaking},
+            onSelectionChanged: (s) => setState(() {
+              _iAmTaking = s.first;
+              _toParentCollects = true;
+              _toParentReturns  = false;
+            }),
+          ),
+          const SizedBox(height: 16),
+        ],
 
         // Date
         _DatePickerField(label: _fmtDate(_date), onTap: _pickDate),
@@ -350,11 +408,11 @@ class _RequestSheetState extends ConsumerState<_RequestSheet> {
             ButtonSegment(
                 value: true,
                 icon: const Icon(Icons.directions_walk, size: 14),
-                label: Text('${_iAmTaking ? myName : otherName} picks up')),
+                label: Text('$toName picks up')),
             ButtonSegment(
                 value: false,
                 icon: const Icon(Icons.drive_eta, size: 14),
-                label: Text('${_iAmTaking ? otherName : myName} drops off')),
+                label: Text('$fromName drops off')),
           ],
           selected: {_toParentCollects},
           onSelectionChanged: (s) =>
@@ -377,7 +435,7 @@ class _RequestSheetState extends ConsumerState<_RequestSheet> {
           }),
           title: const Text('Has a return time'),
           subtitle: Text(_hasReturnTime
-              ? 'Kids return to the other parent'
+              ? 'Kids are returned at a set time'
               : 'Day transfer — kids stay overnight'),
           contentPadding: EdgeInsets.zero,
         ),
@@ -401,8 +459,8 @@ class _RequestSheetState extends ConsumerState<_RequestSheet> {
                     color: Theme.of(context).colorScheme.onSurfaceVariant)),
           ]),
           const SizedBox(height: 8),
-        ] else ...[
-          // Repeat weekly only makes sense for day transfers
+        ] else if (!isHelper) ...[
+          // Repeat weekly only makes sense for co-parent day transfers
           SwitchListTile(
             value: _repeatWeekly,
             onChanged: (v) => setState(() => _repeatWeekly = v),
@@ -424,13 +482,11 @@ class _RequestSheetState extends ConsumerState<_RequestSheet> {
               ButtonSegment(
                   value: false,
                   icon: const Icon(Icons.directions_walk, size: 14),
-                  label: Text(
-                      '${_iAmTaking ? otherName : myName} picks up')),
+                  label: Text('$fromName picks up')),
               ButtonSegment(
                   value: true,
                   icon: const Icon(Icons.drive_eta, size: 14),
-                  label: Text(
-                      '${_iAmTaking ? myName : otherName} drops back')),
+                  label: Text('$toName drops back')),
             ],
             selected: {_toParentReturns},
             onSelectionChanged: (s) =>

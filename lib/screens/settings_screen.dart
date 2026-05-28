@@ -20,6 +20,7 @@ class SettingsScreen extends ConsumerWidget {
     final colorsAsync = ref.watch(colorsProvider);
     final themeMode   = ref.watch(themeProvider).valueOrNull ?? ThemeMode.system;
     final myName      = ref.watch(authProvider).valueOrNull?.userName ?? '';
+    final household   = ref.watch(householdProvider).valueOrNull;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -74,15 +75,29 @@ class SettingsScreen extends ConsumerWidget {
 
             _SectionHeader('Parent colours'),
 
-            // Dynamic parent colour rows from household data
-            ...colors.parentNames.map((name) => _ColorRow(
-              label: name,
-              description: "Shown on $name's events and calendar blocks",
-              current: colors.parentColor(name),
-              isEditable: myName == name,
+            // Parent colour rows from household data
+            ...(household?.parents ?? const []).map((m) => _ColorRow(
+              label: m.displayName,
+              description: "Shown on ${m.displayName}'s events and calendar blocks",
+              current: colors.parentColor(m.displayName),
+              isEditable: myName == m.displayName,
               onChanged: (c) =>
                   ref.read(colorsProvider.notifier).updateMyColor(c),
             )),
+
+            // Helper colours (grandparents, nannies, …) — shown only if any
+            if ((household?.helpers ?? const []).isNotEmpty) ...[
+              const SizedBox(height: 24),
+              _SectionHeader('Helper colours'),
+              ...household!.helpers.map((m) => _ColorRow(
+                label: m.displayName,
+                description: "Shown when ${m.displayName} is covering a pickup",
+                current: colors.parentColor(m.displayName),
+                isEditable: myName == m.displayName,
+                onChanged: (c) =>
+                    ref.read(colorsProvider.notifier).updateMyColor(c),
+              )),
+            ],
             const SizedBox(height: 24),
             _SectionHeader('Children'),
             Text(
@@ -706,50 +721,72 @@ class _ColorRow extends StatelessWidget {
   }
 
   void _pickColor(BuildContext context) {
-    // Simple grid of preset colours — avoids adding a colour-picker dependency
-    final presets = [
-      Colors.blue[800]!,
+    // Grid of preset colours — avoids adding a colour-picker dependency.
+    // Two tones per hue (deep + medium) plus neutrals for plenty of choice.
+    final presets = <Color>[
+      // Blues / indigos
+      Colors.blue[900]!,
+      Colors.blue[600]!,
+      Colors.lightBlue[700]!,
       Colors.indigo[700]!,
-      Colors.purple[700]!,
-      Colors.pink[700]!,
-      Colors.red[700]!,
-      Colors.orange[800]!,
-      Colors.amber[700]!,
-      Colors.green[700]!,
-      Colors.teal[700]!,
+      Colors.indigo[400]!,
+      // Cyans / teals / greens
       Colors.cyan[700]!,
+      Colors.teal[700]!,
+      Colors.teal[400]!,
+      Colors.green[700]!,
+      Colors.green[500]!,
+      Colors.lightGreen[700]!,
+      // Yellows / ambers / oranges
+      Colors.lime[800]!,
+      Colors.amber[700]!,
+      Colors.orange[800]!,
+      Colors.deepOrange[600]!,
+      // Reds / pinks / purples
+      Colors.red[700]!,
+      Colors.pink[600]!,
+      Colors.pink[300]!,
+      Colors.purple[700]!,
+      Colors.purple[400]!,
+      Colors.deepPurple[600]!,
+      // Neutrals / browns
       Colors.brown[600]!,
       Colors.blueGrey[600]!,
+      Colors.grey[700]!,
     ];
 
     showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
         title: Text('Choose colour for $label'),
-        content: Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: presets.map((c) {
-            final isSelected = c.value == current.value;
-            return GestureDetector(
-              onTap: () {
-                onChanged(c);
-                Navigator.pop(context);
-              },
-              child: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: c,
-                  borderRadius: BorderRadius.circular(8),
-                  border: isSelected
-                      ? Border.all(
-                          color: Colors.black, width: 3)
-                      : null,
-                ),
-              ),
-            );
-          }).toList(),
+        content: SizedBox(
+          width: 300,
+          child: SingleChildScrollView(
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: presets.map((c) {
+                final isSelected = c.value == current.value;
+                return GestureDetector(
+                  onTap: () {
+                    onChanged(c);
+                    Navigator.pop(context);
+                  },
+                  child: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: c,
+                      borderRadius: BorderRadius.circular(8),
+                      border: isSelected
+                          ? Border.all(color: Colors.black, width: 3)
+                          : null,
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
         ),
       ),
     );

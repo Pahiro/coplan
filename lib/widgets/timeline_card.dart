@@ -6,6 +6,7 @@ import '../models/app_colors.dart';
 import '../models/resolved_event.dart';
 import '../providers/colors_provider.dart';
 import '../providers/custody_provider.dart';
+import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 import 'custody_request_edit_sheet.dart';
 import 'event_edit_sheet.dart';
@@ -25,6 +26,11 @@ class TimelineCard extends ConsumerWidget {
     final parent = event.assignedParent;
     final parentColor = colors.parentColor(parent);
     final parentLight = colors.parentLightColor(parent);
+    // Flag when the responsible person is a helper (not a parent) so the card
+    // makes clear neither parent is covering.
+    final household = ref.watch(householdProvider).valueOrNull;
+    final isHelper =
+        household?.helpers.any((h) => h.displayName == parent) ?? false;
 
     final timeStr =
         '${event.time.hour.toString().padLeft(2, '0')}:${event.time.minute.toString().padLeft(2, '0')}';
@@ -170,6 +176,33 @@ class TimelineCard extends ConsumerWidget {
                       ),
                     ),
                   ),
+                  if (isHelper) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: parentLight,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: parentColor.withOpacity(0.4)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.volunteer_activism_outlined,
+                              size: 11, color: parentColor),
+                          const SizedBox(width: 3),
+                          Text(
+                            'Helper',
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: parentColor,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   if (event.isShared) ...[
                     const SizedBox(height: 4),
                     Container(
