@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../models/resolved_event.dart';
+import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 
 /// Bottom sheet for creating a new standing rule or editing an existing
@@ -199,11 +200,15 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
               value: _child,
               decoration: const InputDecoration(
                   labelText: 'Child', border: OutlineInputBorder()),
-              items: const [
-                DropdownMenuItem(value: 'All',   child: Text('Both — Henri & Chris')),
-                DropdownMenuItem(value: 'Henri', child: Text('Henri')),
-                DropdownMenuItem(value: 'Chris', child: Text('Chris')),
-              ],
+              items: (ref.watch(householdChildNamesProvider)
+                  .map((c) => c.name)
+                  .toList()
+                ..insert(0, 'All'))
+                  .map((name) => DropdownMenuItem(
+                        value: name,
+                        child: Text(name == 'All' ? 'All children' : name),
+                      ))
+                  .toList(),
               onChanged: (v) => setState(() => _child = v ?? 'All'),
             ),
             const SizedBox(height: 4),

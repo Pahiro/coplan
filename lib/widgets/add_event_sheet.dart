@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../engine/resolution_engine.dart';
 import '../models/resolved_event.dart';
 import '../providers/custody_provider.dart';
+import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 
 enum _AddMode { standing, oneoff }
@@ -89,15 +90,23 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
             );
       } else {
         // Use rotation to determine responsible parent for that date.
-        final owner = ResolutionEngine(baseRules: const [], overrides: const [])
-            .dayOwner(_date);
+        final household = ref.read(householdProvider).valueOrNull;
+        final anchor   = household?.rotationAnchorDate ?? DateTime(2025, 1, 6);
+        final evenName = household?.rotationParentEvenName ?? 'Bennet';
+        final oddName  = household?.rotationParentOddName  ?? 'Jana';
+        final owner = ResolutionEngine(
+          baseRules: const [], overrides: const [],
+          rotationAnchor: anchor,
+          rotationParentEven: evenName,
+          rotationParentOdd: oddName,
+        ).dayOwner(_date);
         await ref.read(custodyRequestsProvider.notifier).createSharedEvent(
               targetDate:     DateFormat('yyyy-MM-dd').format(_date),
               childName:      _child,
               time:           _fmtTime(_time),
               activity:       _activityCtrl.text.trim(),
               location:       _locationCtrl.text.trim(),
-              assignedParent: owner.displayName,
+              assignedParent: owner,
             );
       }
       if (mounted) Navigator.pop(context);
@@ -202,11 +211,15 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
               value: _child,
               decoration: const InputDecoration(
                   labelText: 'Child', border: OutlineInputBorder()),
-              items: const [
-                DropdownMenuItem(value: 'All',   child: Text('Both — Henri & Chris')),
-                DropdownMenuItem(value: 'Henri', child: Text('Henri')),
-                DropdownMenuItem(value: 'Chris', child: Text('Chris')),
-              ],
+              items: (ref.watch(householdChildNamesProvider)
+                  .map((c) => c.name)
+                  .toList()
+                ..insert(0, 'All'))
+                  .map((name) => DropdownMenuItem(
+                        value: name,
+                        child: Text(name == 'All' ? 'All children' : name),
+                      ))
+                  .toList(),
               onChanged: (v) => setState(() => _child = v ?? 'All'),
             ),
 

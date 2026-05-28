@@ -82,6 +82,19 @@ class HouseholdConfig {
   List<HouseholdMember> get helpers =>
       members.where((m) => m.isHelper).toList();
 
+  /// Rotation anchor as a DateTime (parses "YYYY-MM-DD").
+  DateTime get rotationAnchorDate {
+    final parts = rotationAnchor.split('-');
+    if (parts.length == 3) {
+      return DateTime(
+        int.parse(parts[0]),
+        int.parse(parts[1]),
+        int.parse(parts[2]),
+      );
+    }
+    return DateTime(2025, 1, 6); // fallback
+  }
+
   /// Display name of the parent who owns even weeks.
   String? get rotationParentEvenName {
     final m = members.where((m) => m.userId == rotationParentEvenId).firstOrNull;

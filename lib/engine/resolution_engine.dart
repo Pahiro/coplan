@@ -1,7 +1,6 @@
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 
-import '../core/constants.dart';
 import '../models/base_rule.dart';
 import '../models/custody_request.dart';
 import '../models/manual_override.dart';
@@ -14,17 +13,26 @@ import '../models/weekday_rule.dart';
 /// Priority for any given event slot:
 ///   1. Manual override      (date-specific record in manual_overrides)
 ///   2. Weekday rule         (recurring day-of-week record in custody_weekday_rules)
-///   3. Base rotation        (even/odd week from [AppConstants.rotationAnchor])
+///   3. Base rotation        (even/odd week from [rotationAnchor])
 ///
 /// Accepted [CustodyRequest]s layer on top:
 ///   - Day transfers  override [dayOwner] for that date (higher priority than weekday rules).
 ///   - Windows        affect [parentAtTime] during their pickup→return window only.
+///
+/// Parent identity is now string-based (display names from the household).
+/// [rotationParentEven] and [rotationParentOdd] replace the former hardcoded
+/// `Parent.bennet` / `Parent.jana` enum values.
 class ResolutionEngine {
   final List<BaseRule>             baseRules;
   final List<ManualOverride>       overrides;
   final List<CustodyRequest>       custodyRequests;
   final List<WeekdayRule>          weekdayRules;
   final List<RecurringArrangement> recurringArrangements;
+
+  /// Rotation config — previously from AppConstants, now passed in.
+  final DateTime rotationAnchor;
+  final String   rotationParentEven;
+  final String   rotationParentOdd;
 
   /// Per-date cache for [effectiveCustodyFor] to avoid recomputing the merged
   /// real + virtual custody list multiple times per [resolveDay] pass.
@@ -33,6 +41,9 @@ class ResolutionEngine {
   ResolutionEngine({
     required this.baseRules,
     required this.overrides,
+    required this.rotationAnchor,
+    required this.rotationParentEven,
+    required this.rotationParentOdd,
     this.custodyRequests       = const [],
     this.weekdayRules          = const [],
     this.recurringArrangements = const [],
@@ -43,26 +54,26 @@ class ResolutionEngine {
   /// The day owner from weekday rules or base rotation only, ignoring any
   /// accepted day-transfer custody request. Used for split-colour rendering
   /// when a transfer pickup falls mid-day.
-  Parent baseOwner(DateTime date) =>
+  String baseOwner(DateTime date) =>
       _weekdayRuleParent(date.weekday) ?? weekOwner(date);
 
   /// Returns the parent who "owns" the week containing [date] by rotation.
   ///
   /// Uses UTC epoch math so that DST transitions never shift [Duration.inDays]
   /// and flip the parity (see ISSUES.md #1).
-  Parent weekOwner(DateTime date) {
+  String weekOwner(DateTime date) {
     final monday       = _toMondayUtc(date);
-    final anchorMonday = _toMondayUtc(AppConstants.rotationAnchor);
+    final anchorMonday = _toMondayUtc(rotationAnchor);
     final weeks = (monday.millisecondsSinceEpoch - anchorMonday.millisecondsSinceEpoch) ~/ (7 * 86400000);
-    return weeks.isEven ? Parent.bennet : Parent.jana;
+    return weeks.isEven ? rotationParentEven : rotationParentOdd;
   }
 
   /// The primary responsible parent for an entire day.
   ///
   /// Priority: accepted day-transfer request > weekday rule > week rotation.
-  Parent dayOwner(DateTime date) {
+  String dayOwner(DateTime date) {
     final transfer = dayTransferFor(date);
-    if (transfer != null) return parentFromString(transfer.toParent);
+    if (transfer != null) return transfer.toParent;
     return _weekdayRuleParent(date.weekday) ?? weekOwner(date);
   }
 
@@ -110,14 +121,14 @@ class ResolutionEngine {
       final start = DateTime(a.startDate.year, a.startDate.month, a.startDate.day);
       if (d.isBefore(start)) continue;
       // Conditional: skip weeks where the recipient already owns the day.
-      if (dayBaseOwner == parentFromString(a.toParent)) continue;
+      if (dayBaseOwner == a.toParent) continue;
       // Suppress when a one-off request already covers this date + child.
       final covered = realForDate.any((r) =>
           r.childName == a.childName ||
           r.childName == 'All' ||
           a.childName == 'All');
       if (covered) continue;
-      out.add(a.toVirtualRequest(date, fromParent: dayBaseOwner.displayName));
+      out.add(a.toVirtualRequest(date, fromParent: dayBaseOwner));
     }
     return out;
   }
@@ -159,7 +170,7 @@ class ResolutionEngine {
   }
 
   /// Returns the parent who actually has the kids at [time] on [date].
-  Parent parentAtTime(DateTime date, TimeOfDay time) {
+  String parentAtTime(DateTime date, TimeOfDay time) {
     final timeMin = time.hour * 60 + time.minute;
     for (final r in custodyWindows(date)) {
       final pickup    = _parseTime(r.pickupTime);
@@ -170,7 +181,7 @@ class ResolutionEngine {
         returnMin = ret.hour * 60 + ret.minute;
       }
       if (timeMin >= pickupMin && timeMin < returnMin) {
-        return parentFromString(r.toParent);
+        return r.toParent;
       }
     }
     // Day transfers only take effect from their pickup time onwards — events
@@ -178,7 +189,7 @@ class ResolutionEngine {
     final transfer = dayTransferFor(date);
     if (transfer != null) {
       final p = _parseTime(transfer.pickupTime);
-      if (timeMin >= p.hour * 60 + p.minute) return parentFromString(transfer.toParent);
+      if (timeMin >= p.hour * 60 + p.minute) return transfer.toParent;
       return _weekdayRuleParent(date.weekday) ?? weekOwner(date);
     }
     return dayOwner(date);
@@ -198,7 +209,7 @@ class ResolutionEngine {
               activity:       o.adhocActivity ?? '',
               location:       o.adhocLocation ?? '',
               childName:      o.childName,
-              assignedParent: parentFromString(o.assignedParent),
+              assignedParent: o.assignedParent,
               overrideReason: o.reason.isEmpty ? null : o.reason,
               isAdhoc:        true,
               isShared:       o.isShared,
@@ -219,7 +230,7 @@ class ResolutionEngine {
         activity:              label,
         location:              '',
         childName:             r.childName,
-        assignedParent:        parentFromString(r.toParent),
+        assignedParent:        r.toParent,
         overrideReason:        r.note,
         isAdhoc:               true,
         custodyRequestId:      recurringId == null ? r.id : null,
@@ -256,11 +267,11 @@ class ResolutionEngine {
     final eventTime = _parseTime(override?.overrideTime ?? rule.eventTime);
 
     // ── 2. Schedule parent: override > weekday rule > rotation ───────────────
-    Parent scheduleParent;
+    String scheduleParent;
     String? scheduleReason;
 
     if (override != null) {
-      scheduleParent = parentFromString(override.assignedParent);
+      scheduleParent = override.assignedParent;
       scheduleReason = override.reason.isEmpty ? null : override.reason;
     } else {
       final weekdayParent = _weekdayRuleParent(date.weekday);
@@ -347,10 +358,10 @@ class ResolutionEngine {
     return '$pickup · $ret';
   }
 
-  Parent? _weekdayRuleParent(int weekday) {
+  String? _weekdayRuleParent(int weekday) {
     final rule = weekdayRules.firstWhereOrNull(
         (r) => r.active && r.dayOfWeek == weekday);
-    return rule?.parent;
+    return rule?.assignedParent;
   }
 
   /// Returns the Monday of the ISO week containing [d], pinned to UTC midnight.

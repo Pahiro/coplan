@@ -208,3 +208,9 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
     return buf.toString();
   }
 }
+
+/// Convenience: list of children from the active household for UI dropdowns/lists.
+final householdChildNamesProvider = Provider<List<HouseholdChild>>((ref) {
+  final household = ref.watch(householdProvider).valueOrNull;
+  return household?.children ?? const [];
+});

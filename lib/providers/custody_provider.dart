@@ -7,6 +7,7 @@ import '../models/custody_request.dart';
 import '../services/queue_service.dart';
 import '../services/widget_cache_service.dart';
 import 'auth_provider.dart';
+import 'household_provider.dart';
 import 'queue_count_provider.dart';
 import 'schedule_provider.dart';
 
@@ -68,10 +69,8 @@ class CustodyRequestsNotifier
   }) async {
     final auth      = ref.read(authProvider).valueOrNull;
     final myId      = auth?.userId ?? '';
-    final myName    = auth?.userName?.trim() ?? AppConstants.parentBennet;
-    final otherName = myName == AppConstants.parentBennet
-        ? AppConstants.parentJana
-        : AppConstants.parentBennet;
+    final myName    = auth?.userName?.trim() ?? 'Parent';
+    final otherName = _otherParentName(myName);
 
     final otherId = await otherParentId();
 
@@ -257,18 +256,43 @@ class CustodyRequestsNotifier
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   /// Returns the PocketBase user id of the other parent.
-  ///
-  /// Three fallback strategies so this works offline after the first success:
-  ///   1. List all users and take the one that isn't me.
-  ///   2. Search by the partner's display name.
-  ///   3. Return the value cached in SharedPreferences from a previous call.
-  Future<String> otherParentId() async {
-    final myId      = pb.authStore.record?.id ?? '';
-    final myName    = pb.authStore.record?.data['name'] as String? ?? '';
-    final partnerName = myName == AppConstants.parentBennet
+  /// Returns the display name of the other parent in the household.
+  String _otherParentName(String myName) {
+    final household = ref.read(householdProvider).valueOrNull;
+    if (household != null) {
+      final other = household.parents
+          .where((m) => m.displayName != myName)
+          .firstOrNull;
+      if (other != null) return other.displayName;
+    }
+    // Fallback for legacy setups
+    return myName == AppConstants.parentBennet
         ? AppConstants.parentJana
         : AppConstants.parentBennet;
+  }
 
+  /// Resolves the PocketBase user ID of the other parent in this household.
+  ///
+  /// Three fallback strategies so this works offline after the first success:
+  ///   1. Look up the other parent from household members.
+  ///   2. List all users and take the one that isn't me.
+  ///   3. Return the value cached in SharedPreferences from a previous call.
+  Future<String> otherParentId() async {
+    final myId = pb.authStore.record?.id ?? '';
+
+    // Strategy 1: household members
+    final household = ref.read(householdProvider).valueOrNull;
+    if (household != null) {
+      final other = household.parents
+          .where((m) => m.userId != myId)
+          .firstOrNull;
+      if (other != null) {
+        await QueueService.saveOtherParentId(other.userId);
+        return other.userId;
+      }
+    }
+
+    // Strategy 2: list users
     try {
       final users = await pb.collection('users').getFullList();
       final other = users.firstWhereOrNull((u) => u.id != myId);
@@ -278,20 +302,12 @@ class CustodyRequestsNotifier
       }
     } catch (_) {}
 
-    try {
-      final other = await pb
-          .collection('users')
-          .getFirstListItem('name = "$partnerName"');
-      await QueueService.saveOtherParentId(other.id);
-      return other.id;
-    } catch (_) {}
-
+    // Strategy 3: cached value
     final cached = await QueueService.loadOtherParentId();
     if (cached != null) return cached;
 
     throw Exception(
-      '$partnerName has not registered yet — ask them to log in to CoPlan first, '
-      'or check that the users collection list rule allows authenticated access.',
+      'No co-parent found — invite them to join your household in CoPlan.',
     );
   }
 

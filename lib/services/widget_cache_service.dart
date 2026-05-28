@@ -49,6 +49,9 @@ class WidgetCacheService {
     final nowMinutes = now.hour * 60 + now.minute;
     final events    = <ResolvedEvent>[];
 
+    // Fetch rotation config from household or fall back to app_settings
+    final rotation = await _fetchRotationConfig();
+
     for (int i = 0; i < 3; i++) {
       final date     = now.add(Duration(days: i));
       final overrides = await _fetchOverridesForDate(date);
@@ -59,6 +62,9 @@ class WidgetCacheService {
         custodyRequests:       custody,
         weekdayRules:          weekdayRules,
         recurringArrangements: recurring,
+        rotationAnchor:        rotation.$1,
+        rotationParentEven:    rotation.$2,
+        rotationParentOdd:     rotation.$3,
       ).resolveDay(date);
       events.addAll(dayEvents);
     }
@@ -125,6 +131,54 @@ class WidgetCacheService {
           .toList();
     } catch (_) {
       return [];
+    }
+  }
+
+  /// Fetches rotation anchor + parent names from the active household.
+  /// Falls back to app_settings for legacy single-household setups.
+  static Future<(DateTime, String, String)> _fetchRotationConfig() async {
+    try {
+      final userId = pb.authStore.record?.id ?? '';
+      final user = await pb.collection('users').getOne(userId);
+      final householdId = user.data['active_household'] as String?;
+      if (householdId != null && householdId.isNotEmpty) {
+        final h = await pb.collection('households').getOne(householdId);
+        final anchorStr = h.data['rotation_anchor'] as String? ?? '';
+        final parts = anchorStr.split('-');
+        final anchor = parts.length == 3
+            ? DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]))
+            : DateTime(2025, 1, 6);
+
+        // Resolve parent display names from household_members
+        final members = await pb.collection('household_members')
+            .getFullList(filter: 'household = "$householdId" && role = "parent"');
+        final evenId = h.data['rotation_parent_even'] as String? ?? '';
+        final oddId  = h.data['rotation_parent_odd'] as String? ?? '';
+        String evenName = 'Parent A';
+        String oddName  = 'Parent B';
+        for (final m in members) {
+          if (m.data['user'] == evenId) evenName = m.data['display_name'] as String? ?? evenName;
+          if (m.data['user'] == oddId)  oddName  = m.data['display_name'] as String? ?? oddName;
+        }
+        return (anchor, evenName, oddName);
+      }
+    } catch (_) {}
+
+    // Legacy fallback: read from app_settings
+    try {
+      final settings = await pb.collection('app_settings').getFullList();
+      DateTime anchor = DateTime(2025, 1, 6);
+      for (final s in settings) {
+        if (s.data['key'] == 'rotation_anchor') {
+          final parts = (s.data['value'] as String).split('-');
+          if (parts.length == 3) {
+            anchor = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+          }
+        }
+      }
+      return (anchor, AppConstants.parentBennet, AppConstants.parentJana);
+    } catch (_) {
+      return (DateTime(2025, 1, 6), AppConstants.parentBennet, AppConstants.parentJana);
     }
   }
 }

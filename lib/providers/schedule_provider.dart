@@ -9,6 +9,7 @@ import '../models/manual_override.dart';
 import '../models/recurring_arrangement.dart';
 import '../models/resolved_event.dart';
 import '../models/weekday_rule.dart';
+import 'household_provider.dart';
 
 // ── Static data — fetched once, rarely changes ───────────────────────────────
 
@@ -69,12 +70,20 @@ final resolvedDayProvider =
   final custodyRequests =
       custodyRecords.map((r) => CustodyRequest.fromRecord(r.toJson())).toList();
 
+  final household = ref.watch(householdProvider).valueOrNull;
+  final anchor    = household?.rotationAnchorDate ?? DateTime(2025, 1, 6);
+  final evenName  = household?.rotationParentEvenName ?? 'Bennet';
+  final oddName   = household?.rotationParentOddName  ?? 'Jana';
+
   return ResolutionEngine(
     baseRules:             rules,
     overrides:             overrides,
     custodyRequests:       custodyRequests,
     weekdayRules:          weekdayRules,
     recurringArrangements: recurring,
+    rotationAnchor:        anchor,
+    rotationParentEven:    evenName,
+    rotationParentOdd:     oddName,
   ).resolveDay(date);
 });
 
@@ -130,12 +139,20 @@ final weekEventsProvider =
             r.date.month == date.month &&
             r.date.day   == date.day)
         .toList();
+    final household = ref.watch(householdProvider).valueOrNull;
+    final anchor    = household?.rotationAnchorDate ?? DateTime(2025, 1, 6);
+    final evenName  = household?.rotationParentEvenName ?? 'Bennet';
+    final oddName   = household?.rotationParentOddName  ?? 'Jana';
+
     result[_fmt(date)] = ResolutionEngine(
       baseRules:             rules,
       overrides:             dayOverrides,
       custodyRequests:       dayCustody,
       weekdayRules:          weekdayRules,
       recurringArrangements: recurring,
+      rotationAnchor:        anchor,
+      rotationParentEven:    evenName,
+      rotationParentOdd:     oddName,
     ).resolveDay(date);
   }
   return result;

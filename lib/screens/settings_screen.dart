@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../models/app_colors.dart';
+import '../models/household.dart';
 import '../providers/auth_provider.dart';
 import '../providers/colors_provider.dart';
+import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 import '../providers/theme_provider.dart';
 
@@ -65,51 +67,35 @@ class SettingsScreen extends ConsumerWidget {
             ),
             _SectionHeader('Parent colours'),
 
-            _ColorRow(
-              label: 'Bennet',
-              description: 'Shown on Bennet\'s events and calendar blocks',
-              current: colors.bennetColor,
-              isEditable: myName == 'Bennet',
+            // Dynamic parent colour rows from household data
+            ...colors.parentNames.map((name) => _ColorRow(
+              label: name,
+              description: "Shown on $name's events and calendar blocks",
+              current: colors.parentColor(name),
+              isEditable: myName == name,
               onChanged: (c) =>
                   ref.read(colorsProvider.notifier).updateMyColor(c),
-            ),
-            _ColorRow(
-              label: 'Jana',
-              description: 'Shown on Jana\'s events and calendar blocks',
-              current: colors.janaColor,
-              isEditable: myName == 'Jana',
-              onChanged: (c) =>
-                  ref.read(colorsProvider.notifier).updateMyColor(c),
-            ),
+            )),
             const SizedBox(height: 24),
             _SectionHeader('Child colours'),
             Text(
-              'Used on event cards when a child has a solo event '
-              '(e.g. a birthday party Chris attends alone).',
+              'Used on event cards when a child has a solo event.',
               style: Theme.of(context)
                   .textTheme
                   .bodySmall
                   ?.copyWith(color: Colors.grey),
             ),
             const SizedBox(height: 8),
-            _ColorRow(
-              label: 'Henri',
-              description: 'Shown on Henri-specific events',
-              current: colors.henriColor,
+            // Dynamic child colour rows — provided by household children
+            ...ref.watch(householdChildNamesProvider).map((child) => _ColorRow(
+              label: child.name,
+              description: "Shown on ${child.name}-specific events",
+              current: colors.childColor(child.name),
               isEditable: true,
               onChanged: (c) => ref
                   .read(colorsProvider.notifier)
-                  .updateChildColor('Henri', c),
-            ),
-            _ColorRow(
-              label: 'Chris',
-              description: 'Shown on Chris-specific events',
-              current: colors.chrisColor,
-              isEditable: true,
-              onChanged: (c) => ref
-                  .read(colorsProvider.notifier)
-                  .updateChildColor('Chris', c),
-            ),
+                  .updateChildColor(child.id, c),
+            )),
             const SizedBox(height: 24),
             _SectionHeader('Recurring schedule'),
             Text(
@@ -170,15 +156,11 @@ class _RecurringRulesSection extends ConsumerWidget {
             children: active.map((rule) {
               return ListTile(
                 leading: CircleAvatar(
-                  backgroundColor: rule.assignedParent == 'Bennet'
-                      ? Colors.blue[100]
-                      : Colors.pink[100],
+                  backgroundColor: colors.parentLightColor(rule.assignedParent),
                   child: Text(
                     rule.assignedParent[0],
                     style: TextStyle(
-                      color: rule.assignedParent == 'Bennet'
-                          ? Colors.blue[800]
-                          : Colors.pink[800],
+                      color: colors.parentColor(rule.assignedParent),
                       fontWeight: FontWeight.bold,
                     ),
                   ),

@@ -1,28 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../core/constants.dart';
-
-enum Parent { bennet, jana }
-
-extension ParentX on Parent {
-  String get displayName =>
-      this == Parent.bennet ? AppConstants.parentBennet : AppConstants.parentJana;
-
-  /// High-contrast accent colour for card borders and badges.
-  Color get color =>
-      this == Parent.bennet ? const Color(0xFF1565C0) : const Color(0xFFD81B60);
-
-  /// Soft background tint for time chips.
-  Color get lightColor =>
-      this == Parent.bennet ? const Color(0xFFBBDEFB) : const Color(0xFFFCE4EC);
-}
-
-Parent parentFromString(String s) {
-  if (s == AppConstants.parentBennet) return Parent.bennet;
-  if (s == AppConstants.parentJana) return Parent.jana;
-  throw ArgumentError('Unknown parent name "$s" — expected '
-      '"${AppConstants.parentBennet}" or "${AppConstants.parentJana}"');
-}
+/// Resolves a parent display name to a consistent key for colour lookups.
+/// No longer throws on unknown — returns the input as-is (the household
+/// config handles validation at a higher level).
+String normalizeParentName(String s) => s.trim();
 
 class ResolvedEvent {
   final DateTime date;
@@ -30,7 +11,11 @@ class ResolvedEvent {
   final String activity;
   final String location;
   final String childName;
-  final Parent assignedParent;
+
+  /// Display name of the responsible parent (e.g. "Bennet", "Jana").
+  /// Previously a `Parent` enum — now a plain string so it works with
+  /// any household member.
+  final String assignedParent;
 
   /// Non-null when a manual override caused this assignment.
   final String? overrideReason;
@@ -100,8 +85,7 @@ class ResolvedEvent {
         'activity': activity,
         'location': location,
         'childName': childName,
-        'parent': assignedParent.displayName,
-        'parentColorValue': assignedParent.color.value,
+        'parent': assignedParent,
       };
 
   String _p(int n) => n.toString().padLeft(2, '0');

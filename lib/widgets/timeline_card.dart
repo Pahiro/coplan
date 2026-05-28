@@ -162,7 +162,7 @@ class TimelineCard extends ConsumerWidget {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      parent.displayName,
+                      parent,
                       style: TextStyle(
                         color: parentColor,
                         fontWeight: FontWeight.bold,
@@ -430,11 +430,10 @@ class _ChildChipRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (childName == 'All') {
-      return Row(children: [
-        _chip('Henri', colors.henriColor),
-        const SizedBox(width: 4),
-        _chip('Chris', colors.chrisColor),
-      ]);
+      // Don't show individual child chips for "All" — the parent colour
+      // already indicates ownership. Specific children are shown only when
+      // the event is for a single child.
+      return const SizedBox.shrink();
     }
     if (colors.isChildSpecific(childName)) {
       return _chip(childName, colors.childColor(childName));

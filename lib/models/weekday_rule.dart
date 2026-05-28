@@ -1,9 +1,7 @@
-import 'resolved_event.dart';
-
 class WeekdayRule {
   final String id;
   final int dayOfWeek;       // 1 = Monday … 7 = Sunday (ISO)
-  final String assignedParent; // "Bennet" or "Jana"
+  final String assignedParent; // display name
   final String reason;
   final bool active;
 
@@ -22,6 +20,4 @@ class WeekdayRule {
         reason:         (j['reason'] as String?) ?? '',
         active:         (j['active'] as bool?) ?? true,
       );
-
-  Parent get parent => parentFromString(assignedParent);
 }

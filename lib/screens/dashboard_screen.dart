@@ -6,6 +6,7 @@ import '../core/constants.dart';
 import '../models/resolved_event.dart';
 import '../providers/auth_provider.dart';
 import '../providers/custody_provider.dart';
+import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 import '../services/widget_cache_service.dart';
 import '../widgets/timeline_card.dart';
@@ -264,10 +265,12 @@ class _RequestSheetState extends ConsumerState<_RequestSheet> {
   @override
   Widget build(BuildContext context) {
     final auth      = ref.read(authProvider).valueOrNull;
-    final myName    = auth?.userName?.trim() ?? AppConstants.parentBennet;
-    final otherName = myName == AppConstants.parentBennet
-        ? AppConstants.parentJana
-        : AppConstants.parentBennet;
+    final myName    = auth?.userName?.trim() ?? 'Parent';
+    final household = ref.read(householdProvider).valueOrNull;
+    final otherName = household?.parents
+        .where((m) => m.displayName != myName)
+        .map((m) => m.displayName)
+        .firstOrNull ?? 'Co-parent';
 
     return Padding(
       padding: EdgeInsets.only(
@@ -515,22 +518,27 @@ class _TimePickerField extends StatelessWidget {
       );
 }
 
-class _ChildSelector extends StatelessWidget {
+class _ChildSelector extends ConsumerWidget {
   final String value;
   final ValueChanged<String> onChanged;
   const _ChildSelector({required this.value, required this.onChanged});
 
   @override
-  Widget build(BuildContext context) => DropdownButtonFormField<String>(
-        value: value,
-        decoration: const InputDecoration(
-            labelText: 'Child', border: OutlineInputBorder()),
-        items: const [
-          DropdownMenuItem(value: 'All',   child: Text('Both — Henri & Chris')),
-          DropdownMenuItem(value: 'Henri', child: Text('Henri')),
-          DropdownMenuItem(value: 'Chris', child: Text('Chris')),
-        ],
-        onChanged: (v) => onChanged(v ?? 'All'),
-      );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final children = ref.watch(householdChildNamesProvider);
+    final items = ['All', ...children.map((c) => c.name)];
+    return DropdownButtonFormField<String>(
+      value: items.contains(value) ? value : 'All',
+      decoration: const InputDecoration(
+          labelText: 'Child', border: OutlineInputBorder()),
+      items: items
+          .map((name) => DropdownMenuItem(
+                value: name,
+                child: Text(name == 'All' ? 'All children' : name),
+              ))
+          .toList(),
+      onChanged: (v) => onChanged(v ?? 'All'),
+    );
+  }
 }
 

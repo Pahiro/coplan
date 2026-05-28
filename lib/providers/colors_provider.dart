@@ -3,45 +3,54 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/pb_client.dart';
 import '../models/app_colors.dart';
+import '../models/household.dart';
+import 'household_provider.dart';
+
+/// Default parent colours when we can't resolve from household data.
+const _defaultParentColors = [
+  Color(0xFF1565C0), // blue
+  Color(0xFFD81B60), // pink
+  Color(0xFF00897B), // teal
+  Color(0xFFFF8F00), // amber
+];
 
 class ColorsNotifier extends AsyncNotifier<AppColors> {
   @override
   Future<AppColors> build() async {
-    Color bennet = const Color(0xFF1565C0);
-    Color jana   = const Color(0xFFD81B60);
-    Color henri  = const Color(0xFFE65100);
-    Color chris  = const Color(0xFF00695C);
+    final household = ref.watch(householdProvider).valueOrNull;
 
-    // ── Fetch parent preferred colours from users collection ─────────────────
-    try {
-      final users = await pb.collection('users').getFullList();
-      for (final u in users) {
-        final name     = u.data['name'] as String? ?? '';
-        final colorStr = u.data['preferred_color'] as String? ?? '';
-        final parsed   = _parseHex(colorStr);
-        if (parsed == null) continue;
-        if (name == 'Bennet') bennet = parsed;
-        if (name == 'Jana')   jana   = parsed;
-      }
-    } catch (_) {}
+    final parentColors = <String, Color>{};
+    final childColors  = <String, Color>{};
 
-    // ── Fetch child colours from app_settings ────────────────────────────────
-    try {
-      final settings = await pb.collection('app_settings').getFullList();
-      for (final s in settings) {
-        final key    = s.data['key']   as String? ?? '';
-        final parsed = _parseHex(s.data['value'] as String? ?? '');
-        if (parsed == null) continue;
-        if (key == 'color_henri') henri = parsed;
-        if (key == 'color_chris') chris = parsed;
+    if (household != null) {
+      // ── Parent colours from user preferred_color ──────────────────────────
+      for (var i = 0; i < household.members.length; i++) {
+        final m = household.members[i];
+        Color? parsed;
+        try {
+          final user = await pb.collection('users').getOne(m.userId);
+          final hex = user.data['preferred_color'] as String? ?? '';
+          parsed = _parseHex(hex);
+        } catch (_) {}
+        parentColors[m.displayName] =
+            parsed ?? _defaultParentColors[i % _defaultParentColors.length];
       }
-    } catch (_) {}
+
+      // ── Child colours from children collection ────────────────────────────
+      for (final c in household.children) {
+        childColors[c.name] = _parseHex(c.color ?? '') ?? Colors.grey;
+      }
+    } else {
+      // Fallback: legacy behaviour for pre-migration
+      parentColors['Bennet'] = const Color(0xFF1565C0);
+      parentColors['Jana']   = const Color(0xFFD81B60);
+      childColors['Henri']   = const Color(0xFFE65100);
+      childColors['Chris']   = const Color(0xFF00695C);
+    }
 
     return AppColors(
-      bennetColor: bennet,
-      janaColor:   jana,
-      henriColor:  henri,
-      chrisColor:  chris,
+      parentColors: parentColors,
+      childColors:  childColors,
     );
   }
 
@@ -54,23 +63,10 @@ class ColorsNotifier extends AsyncNotifier<AppColors> {
     ref.invalidateSelf();
   }
 
-  /// Update a child's colour in app_settings.
-  Future<void> updateChildColor(String childName, Color color) async {
-    final key = 'color_${childName.toLowerCase()}';
+  /// Update a child's colour in the children collection.
+  Future<void> updateChildColor(String childId, Color color) async {
     final hex = '#${color.value.toRadixString(16).substring(2).toUpperCase()}';
-    // Upsert: find existing record or create
-    try {
-      final records = await pb
-          .collection('app_settings')
-          .getFullList(filter: 'key = "$key"');
-      if (records.isNotEmpty) {
-        await pb.collection('app_settings')
-            .update(records.first.id, body: {'value': hex});
-      } else {
-        await pb.collection('app_settings')
-            .create(body: {'key': key, 'value': hex, 'label': "$childName's colour"});
-      }
-    } catch (_) {}
+    await pb.collection('children').update(childId, body: {'color': hex});
     ref.invalidateSelf();
   }
 

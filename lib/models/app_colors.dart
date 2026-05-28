@@ -1,39 +1,38 @@
 import 'package:flutter/material.dart';
 
-import '../models/resolved_event.dart';
-
-/// Holds the four runtime colours for the app.
-/// Defaults are applied when PocketBase hasn't been reached yet.
+/// Runtime colours for the app — now data-driven from household members
+/// and children. Falls back to defaults for unknown names.
 class AppColors {
-  final Color bennetColor;
-  final Color janaColor;
-  final Color henriColor;
-  final Color chrisColor;
+  /// Map of parent display name → colour.
+  final Map<String, Color> _parentColors;
+  /// Map of child name → colour.
+  final Map<String, Color> _childColors;
 
   const AppColors({
-    this.bennetColor = const Color(0xFF1565C0), // blue
-    this.janaColor   = const Color(0xFFD81B60), // pink
-    this.henriColor  = const Color(0xFFE65100), // deep orange
-    this.chrisColor  = const Color(0xFF00695C), // teal
-  });
+    Map<String, Color> parentColors = const {},
+    Map<String, Color> childColors  = const {},
+  }) : _parentColors = parentColors,
+       _childColors  = childColors;
 
-  Color parentColor(Parent p) =>
-      p == Parent.bennet ? bennetColor : janaColor;
+  /// Accent colour for a parent by display name.
+  Color parentColor(String parentName) =>
+      _parentColors[parentName] ?? Colors.blueGrey;
 
-  Color parentLightColor(Parent p) =>
-      parentColor(p).withOpacity(0.15);
+  /// Soft background tint for a parent.
+  Color parentLightColor(String parentName) =>
+      parentColor(parentName).withOpacity(0.15);
 
   /// Colour for a named child. Returns grey for 'All' / unknown.
-  Color childColor(String childName) => switch (childName) {
-        'Henri' => henriColor,
-        'Chris' => chrisColor,
-        _       => Colors.grey,
-      };
+  Color childColor(String childName) =>
+      _childColors[childName] ?? Colors.grey;
 
   Color childLightColor(String childName) =>
       childColor(childName).withOpacity(0.18);
 
-  /// True when the event is for a single known child (not shared).
+  /// True when the child name is a known specific child (not 'All').
   bool isChildSpecific(String childName) =>
-      childName == 'Henri' || childName == 'Chris';
+      _childColors.containsKey(childName);
+
+  /// All known parent display names.
+  Iterable<String> get parentNames => _parentColors.keys;
 }

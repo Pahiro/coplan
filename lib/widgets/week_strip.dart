@@ -7,7 +7,6 @@ import '../engine/resolution_engine.dart';
 import '../models/app_colors.dart';
 import '../models/custody_request.dart';
 import '../models/recurring_arrangement.dart';
-import '../models/resolved_event.dart';
 import '../models/weekday_rule.dart';
 import '../providers/colors_provider.dart';
 import '../providers/custody_provider.dart';
@@ -61,11 +60,11 @@ class WeekStrip extends ConsumerWidget {
               final window = engine.custodyWindows(day).firstOrNull;
 
               // Default: schedule owner with no split.
-              Parent effectiveOwner = engine.dayOwner(day);
+              String effectiveOwner = engine.dayOwner(day);
               Color? windowToColor;
 
               if (window != null) {
-                final windowParent = parentFromString(window.toParent);
+                final windowParent = window.toParent;
                 // Use solid window-recipient colour only when all events are
                 // covered AND the window has no definite return time.  If a
                 // return time is set the base owner gets the kids back, so
@@ -89,9 +88,8 @@ class WeekStrip extends ConsumerWidget {
                   final p = transfer.pickupTime.split(':');
                   final pickupMin = int.parse(p[0]) * 60 + int.parse(p[1]);
                   if (pickupMin > 0) {
-                    effectiveOwner = parentFromString(transfer.fromParent);
-                    windowToColor  = colors.parentColor(
-                        parentFromString(transfer.toParent));
+                    effectiveOwner = transfer.fromParent;
+                    windowToColor  = colors.parentColor(transfer.toParent);
                   }
                 }
               }
@@ -120,7 +118,7 @@ class WeekStrip extends ConsumerWidget {
 
 class _DayCell extends StatelessWidget {
   final DateTime day;
-  final Parent owner;
+  final String owner;
   final bool isSelected;
   final bool isToday;
   final AppColors colors;
