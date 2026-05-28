@@ -12,99 +12,151 @@
 // fixed and unaffected by later edits or deletion of the arrangement.
 //
 // Runs daily at 00:05 and back-fills the last 14 days (covers brief downtime).
-// The day-owner conditional uses the rotation settings seeded in app_settings.
+// Now iterates per-household, reading rotation config from the `households`
+// collection instead of global `app_settings`.
 cronAdd("freezeRecurring", "5 0 * * *", () => {
     try {
         const dao = $app.dao();
-
-        const setting = (key, fallback) => {
-            try { return dao.findFirstRecordByData("app_settings", "key", key).get("value"); }
-            catch (_) { return fallback; }
-        };
-        const anchorStr  = setting("rotation_anchor", "2026-05-18");
-        const parentEven = setting("rotation_parent_even", "Bennet");
-        const parentOdd  = setting("rotation_parent_odd", "Jana");
 
         const DAY = 86400000;
         const parse = (s) => { const p = s.split("-"); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])); };
         const fmt = (d) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
         const isoDow = (d) => { const x = d.getUTCDay(); return x === 0 ? 7 : x; };
         const mondayOf = (d) => { const m = new Date(d); m.setUTCDate(d.getUTCDate() - (isoDow(d) - 1)); m.setUTCHours(0, 0, 0, 0); return m; };
-        const weekOwner = (d) => {
-            const weeks = Math.floor((mondayOf(d) - mondayOf(parse(anchorStr))) / (7 * DAY));
-            return (((weeks % 2) + 2) % 2) === 0 ? parentEven : parentOdd;
-        };
-
-        // Mirror the app engine's baseOwner: weekday rule > rotation.
-        // Keeps the freeze conditional identical to the live expansion
-        // (see ISSUES.md #2 / DESIGN §5).
-        let weekdayRuleMap = {};
-        try {
-            const wdRules = dao.findRecordsByFilter("custody_weekday_rules", "active = true", "", 500, 0);
-            for (const r of wdRules) {
-                weekdayRuleMap[r.getInt("day_of_week")] = r.get("parent");
-            }
-        } catch (_) { /* collection may not exist or be empty */ }
-        const baseOwner = (d) => weekdayRuleMap[isoDow(d)] || weekOwner(d);
-
-        const userId = (name) => {
-            try { return dao.findFirstRecordByData("users", "name", name).id; }
-            catch (_) { return ""; }
-        };
 
         const now = new Date();
         const today = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-
-        const arrangements = dao.findRecordsByFilter("custody_recurring", "active = true", "", 500, 0);
         const custodyColl = dao.findCollectionByNameOrId("custody_requests");
 
-        for (const a of arrangements) {
-            const dow       = a.getInt("day_of_week");
-            const toParent  = a.get("to_parent");
-            const child     = a.get("child_name") || "All";
-            const startDate = a.get("start_date") || "";
+        // ── Process each household independently ────────────────────────────
+        let households = [];
+        try { households = dao.findRecordsByFilter("households", "", "", 500, 0); }
+        catch (_) { households = []; }
 
-            for (let i = 14; i >= 1; i--) {
-                const d = new Date(today.getTime() - i * DAY);
-                if (isoDow(d) !== dow) continue;
-                const dStr = fmt(d);
-                if (startDate && dStr < startDate) continue;
+        // Fallback: if no households exist yet (pre-migration), use legacy
+        // app_settings path so the cron doesn't silently stop working.
+        if (households.length === 0) {
+            const setting = (key, fb) => {
+                try { return dao.findFirstRecordByData("app_settings", "key", key).get("value"); }
+                catch (_) { return fb; }
+            };
+            households = [{
+                _legacy: true,
+                id: "__legacy__",
+                anchor: setting("rotation_anchor", "2026-05-18"),
+                evenName: setting("rotation_parent_even", "Bennet"),
+                oddName:  setting("rotation_parent_odd", "Jana"),
+            }];
+        }
 
-                // Only fire on weeks where the OTHER parent owns the day
-                // (mirrors the app engine's baseOwner conditional).
-                const owner = baseOwner(d);
-                if (owner === toParent) continue;
+        for (const h of households) {
+            let anchorStr, parentEvenName, parentOddName, hId;
 
-                // Skip if a real request already covers this date + child.
-                let existing = [];
+            if (h._legacy) {
+                anchorStr      = h.anchor;
+                parentEvenName = h.evenName;
+                parentOddName  = h.oddName;
+                hId            = "";
+            } else {
+                anchorStr = h.get("rotation_anchor") || "2026-05-18";
+                hId       = h.id;
+                // Resolve rotation parent user ids → display names
+                const evenId = h.get("rotation_parent_even") || "";
+                const oddId  = h.get("rotation_parent_odd")  || "";
+                parentEvenName = "";
+                parentOddName  = "";
                 try {
-                    existing = dao.findRecordsByFilter("custody_requests", "date = {:d}", "", 500, 0, { d: dStr });
-                } catch (_) { existing = []; }
-                const covered = existing.some((r) => {
-                    const c = r.get("child_name");
-                    return c === child || c === "All" || child === "All";
-                });
-                if (covered) continue;
+                    const members = dao.findRecordsByFilter(
+                        "household_members",
+                        `household = "${hId}" && role = "parent"`, "", 10, 0);
+                    for (const m of members) {
+                        if (m.get("user") === evenId) parentEvenName = m.get("display_name");
+                        if (m.get("user") === oddId)  parentOddName  = m.get("display_name");
+                    }
+                } catch (_) {}
+                if (!parentEvenName || !parentOddName) continue; // incomplete config
+            }
 
-                const fromId = userId(owner);
-                const toId   = userId(toParent);
-                if (!fromId || !toId) continue; // need valid relations for visibility
+            const weekOwner = (d) => {
+                const weeks = Math.floor((mondayOf(d) - mondayOf(parse(anchorStr))) / (7 * DAY));
+                return (((weeks % 2) + 2) % 2) === 0 ? parentEvenName : parentOddName;
+            };
 
-                const rec = new Record(custodyColl);
-                rec.set("date",              dStr);
-                rec.set("from_parent",       owner);
-                rec.set("to_parent",         toParent);
-                rec.set("child_name",        child);
-                rec.set("pickup_time",       a.get("pickup_time") || "");
-                rec.set("return_time",       a.get("return_time") || "");
-                rec.set("return_time_tbd",   a.getBool("return_time_tbd"));
-                rec.set("status",            "accepted");
-                rec.set("note",              a.get("note") || "");
-                rec.set("created_by",        fromId);
-                rec.set("requested_from",    toId);
-                rec.set("to_parent_collects", a.getBool("to_parent_collects"));
-                rec.set("to_parent_returns",  a.getBool("to_parent_returns"));
-                try { dao.saveRecord(rec); } catch (_) { /* skip individual failures */ }
+            // Mirror the app engine's baseOwner: weekday rule > rotation.
+            let weekdayRuleMap = {};
+            try {
+                const filter = hId
+                    ? `active = true && household = "${hId}"`
+                    : "active = true";
+                const wdRules = dao.findRecordsByFilter("custody_weekday_rules", filter, "", 500, 0);
+                for (const r of wdRules) {
+                    weekdayRuleMap[r.getInt("day_of_week")] = r.get("parent");
+                }
+            } catch (_) {}
+            const baseOwner = (d) => weekdayRuleMap[isoDow(d)] || weekOwner(d);
+
+            const userId = (name) => {
+                try { return dao.findFirstRecordByData("users", "name", name).id; }
+                catch (_) { return ""; }
+            };
+
+            // Filter arrangements to this household
+            let arrangements = [];
+            try {
+                const filter = hId
+                    ? `active = true && household = "${hId}"`
+                    : "active = true";
+                arrangements = dao.findRecordsByFilter("custody_recurring", filter, "", 500, 0);
+            } catch (_) {}
+
+            for (const a of arrangements) {
+                const dow       = a.getInt("day_of_week");
+                const toParent  = a.get("to_parent");
+                const child     = a.get("child_name") || "All";
+                const startDate = a.get("start_date") || "";
+
+                for (let i = 14; i >= 1; i--) {
+                    const d = new Date(today.getTime() - i * DAY);
+                    if (isoDow(d) !== dow) continue;
+                    const dStr = fmt(d);
+                    if (startDate && dStr < startDate) continue;
+
+                    // Only fire on weeks where the OTHER parent owns the day.
+                    const owner = baseOwner(d);
+                    if (owner === toParent) continue;
+
+                    // Skip if a real request already covers this date + child.
+                    let existing = [];
+                    try {
+                        existing = dao.findRecordsByFilter("custody_requests", "date = {:d}", "", 500, 0, { d: dStr });
+                    } catch (_) { existing = []; }
+                    const covered = existing.some((r) => {
+                        const c = r.get("child_name");
+                        return c === child || c === "All" || child === "All";
+                    });
+                    if (covered) continue;
+
+                    const fromId = userId(owner);
+                    const toId   = userId(toParent);
+                    if (!fromId || !toId) continue;
+
+                    const rec = new Record(custodyColl);
+                    rec.set("date",              dStr);
+                    rec.set("from_parent",       owner);
+                    rec.set("to_parent",         toParent);
+                    rec.set("child_name",        child);
+                    rec.set("pickup_time",       a.get("pickup_time") || "");
+                    rec.set("return_time",       a.get("return_time") || "");
+                    rec.set("return_time_tbd",   a.getBool("return_time_tbd"));
+                    rec.set("status",            "accepted");
+                    rec.set("note",              a.get("note") || "");
+                    rec.set("created_by",        fromId);
+                    rec.set("requested_from",    toId);
+                    rec.set("to_parent_collects", a.getBool("to_parent_collects"));
+                    rec.set("to_parent_returns",  a.getBool("to_parent_returns"));
+                    if (hId) rec.set("household", hId);
+                    try { dao.saveRecord(rec); } catch (_) {}
+                }
             }
         }
     } catch (err) {
