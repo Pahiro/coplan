@@ -8,6 +8,7 @@ import 'providers/realtime_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/calendar_screen.dart';
 import 'screens/dashboard_screen.dart';
+import 'screens/household_setup_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/requests_screen.dart';
 import 'screens/settings_screen.dart';
@@ -44,8 +45,11 @@ class CoplanApp extends ConsumerWidget {
           body: Center(child: CircularProgressIndicator()),
         ),
         error: (_, __) => const LoginScreen(),
-        data: (state) =>
-            state.isLoggedIn ? const _MainShell() : const LoginScreen(),
+        data: (state) {
+          if (!state.isLoggedIn) return const LoginScreen();
+          if (state.needsHousehold) return const HouseholdSetupScreen();
+          return const _MainShell();
+        },
       ),
     );
   }
