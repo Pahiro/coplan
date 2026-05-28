@@ -84,25 +84,17 @@ class SettingsScreen extends ConsumerWidget {
                   ref.read(colorsProvider.notifier).updateMyColor(c),
             )),
             const SizedBox(height: 24),
-            _SectionHeader('Child colours'),
+            _SectionHeader('Children'),
             Text(
-              'Used on event cards when a child has a solo event.',
+              'Children in this household. Colours show on event cards when a '
+              'child has a solo event.',
               style: Theme.of(context)
                   .textTheme
                   .bodySmall
                   ?.copyWith(color: Colors.grey),
             ),
             const SizedBox(height: 8),
-            // Dynamic child colour rows — provided by household children
-            ...ref.watch(householdChildNamesProvider).map((child) => _ColorRow(
-              label: child.name,
-              description: "Shown on ${child.name}-specific events",
-              current: colors.childColor(child.name),
-              isEditable: true,
-              onChanged: (c) => ref
-                  .read(colorsProvider.notifier)
-                  .updateChildColor(child.id, c),
-            )),
+            const _ChildrenSection(),
             const SizedBox(height: 24),
             _SectionHeader('Household mode'),
             Card(
@@ -388,6 +380,107 @@ class _HouseholdSection extends ConsumerWidget {
   }
 }
 
+// ── Children management ───────────────────────────────────────────────────────
+
+class _ChildrenSection extends ConsumerWidget {
+  const _ChildrenSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
+    final children = ref.watch(householdChildNamesProvider);
+
+    return Column(
+      children: [
+        if (children.isEmpty)
+          const Card(
+            margin: EdgeInsets.only(bottom: 8),
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('No children yet — add one below.',
+                  style: TextStyle(color: Colors.grey)),
+            ),
+          ),
+        ...children.map((child) => _ColorRow(
+              label: child.name,
+              description: "Shown on ${child.name}-specific events",
+              current: colors.childColor(child.name),
+              isEditable: true,
+              onChanged: (c) => ref
+                  .read(colorsProvider.notifier)
+                  .updateChildColor(child.id, c),
+              onDelete: () => _remove(context, ref, child.id, child.name),
+            )),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Add child'),
+            onPressed: () => _add(context, ref),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _add(BuildContext context, WidgetRef ref) async {
+    final ctrl = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Add child'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(
+            labelText: "Child's name",
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (v) => Navigator.pop(context, v),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, ctrl.text),
+              child: const Text('Add')),
+        ],
+      ),
+    );
+    if (name != null && name.trim().isNotEmpty) {
+      await ref.read(householdProvider.notifier).addChild(name: name.trim());
+    }
+  }
+
+  Future<void> _remove(
+      BuildContext context, WidgetRef ref, String id, String name) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Remove $name?'),
+        content: Text(
+            "$name will be removed from the household. Existing events that "
+            "reference $name stay in the record but won't match a child colour."),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await ref.read(householdProvider.notifier).removeChild(id);
+    }
+  }
+}
+
 // ── Recurring weekday rules ───────────────────────────────────────────────────
 
 class _RecurringRulesSection extends ConsumerWidget {
@@ -513,12 +606,16 @@ class _ColorRow extends StatelessWidget {
   final bool isEditable;
   final ValueChanged<Color> onChanged;
 
+  /// When provided, a delete action is shown alongside the colour control.
+  final VoidCallback? onDelete;
+
   const _ColorRow({
     required this.label,
     required this.description,
     required this.current,
     required this.isEditable,
     required this.onChanged,
+    this.onDelete,
   });
 
   @override
@@ -538,16 +635,27 @@ class _ColorRow extends StatelessWidget {
             style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text(description,
             style: const TextStyle(fontSize: 12)),
-        trailing: isEditable
-            ? TextButton(
-                onPressed: () => _pickColor(context),
-                child: const Text('Change'),
-              )
-            : Tooltip(
-                message: 'Only $label can change their own colour',
-                child: const Icon(Icons.lock_outline,
-                    size: 18, color: Colors.grey),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            isEditable
+                ? TextButton(
+                    onPressed: () => _pickColor(context),
+                    child: const Text('Change'),
+                  )
+                : Tooltip(
+                    message: 'Only $label can change their own colour',
+                    child: const Icon(Icons.lock_outline,
+                        size: 18, color: Colors.grey),
+                  ),
+            if (onDelete != null)
+              IconButton(
+                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                tooltip: 'Remove',
+                onPressed: onDelete,
               ),
+          ],
+        ),
       ),
     );
   }
