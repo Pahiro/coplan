@@ -5,7 +5,6 @@ import 'package:home_widget/home_widget.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app.dart';
-import 'core/constants.dart';
 import 'core/pb_client.dart';
 import 'providers/queue_count_provider.dart';
 import 'services/notification_service.dart';
@@ -20,16 +19,6 @@ void main() async {
   final initialQueueCount = await QueueService.pendingCount();
 
   if (!kIsWeb) {
-    // Persist config for the Kotlin background worker (reads via FlutterSharedPreferences)
-    final anchor = AppConstants.rotationAnchor;
-    await prefs.setString('pb_url', AppConstants.pbUrl);
-    await prefs.setString(
-      'rotation_anchor',
-      '${anchor.year}-'
-      '${anchor.month.toString().padLeft(2, '0')}-'
-      '${anchor.day.toString().padLeft(2, '0')}',
-    );
-
     HomeWidget.registerBackgroundCallback(widgetBackgroundCallback);
     HomeWidget.setAppGroupId(AppConstants.widgetAppId);
   }
