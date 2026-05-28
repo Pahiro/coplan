@@ -17,7 +17,6 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
-import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -27,31 +26,39 @@ import java.util.concurrent.TimeUnit
 /**
  * Periodic background worker (every 15 min, network required).
  *
- * What it does each run:
+ * Mirrors the Dart [ResolutionEngine] for the active household:
  *  1. Reads the PocketBase auth token + URL from Flutter's SharedPreferences.
- *  2. Fetches base rules + overrides for the next 3 days from PocketBase.
- *  3. Runs the same 3-tier resolution logic as the Dart engine.
- *  4. Writes the resolved events to HomeWidgetPlugin prefs and updates the widget.
- *  5. Polls for new pickup requests addressed to the current user and fires
- *     a local notification if any appear that haven't been notified before.
+ *  2. Loads the user's active household config (rotation anchor, pattern-based
+ *     scheme, mode, parent/helper names + colours).
+ *  3. Resolves the next 3 days — base rules, manual overrides, accepted custody
+ *     requests, AND virtual occurrences expanded from recurring arrangements.
+ *  4. Writes resolved events to HomeWidgetPlugin prefs and updates the widgets.
+ *  5. Notifies for new pending requests addressed to the current user.
  */
 class CoplanSyncWorker(
     private val ctx: Context,
     params: WorkerParameters
 ) : CoroutineWorker(ctx, params) {
 
-    // Flutter's shared_preferences stores keys with the "flutter." prefix
     private val flutterPrefs by lazy {
         ctx.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
     }
-    // Kotlin-only state (seen request IDs, etc.)
     private val workerPrefs by lazy {
         ctx.getSharedPreferences("CoplanWorkerPrefs", Context.MODE_PRIVATE)
     }
-    // home_widget reads events from this file
     private val widgetPrefs by lazy {
         ctx.getSharedPreferences("HomeWidgetPlugin", Context.MODE_PRIVATE)
     }
+
+    /** Resolved household configuration used to mirror the Dart engine. */
+    private class Cfg(
+        val anchor: LocalDate,
+        val pattern: IntArray,
+        val mode: String,            // "custody" | "shared"
+        val evenName: String,
+        val oddName: String,
+        val colorByName: Map<String, Long>,
+    )
 
     // ── Entry point ──────────────────────────────────────────────────────────
 
@@ -64,21 +71,30 @@ class CoplanSyncWorker(
             val token = auth.optString("token").takeIf { it.isNotEmpty() }
                 ?: return@withContext Result.success()
 
-            val model  = auth.optJSONObject("model") ?: auth.optJSONObject("record")
-            val myId   = model?.optString("id") ?: ""
+            val model = auth.optJSONObject("model") ?: auth.optJSONObject("record")
+            val myId  = model?.optString("id") ?: ""
 
-            val pbUrl  = flutterPrefs.getString("flutter.pb_url", "http://localhost:8090")
+            val pbUrl = flutterPrefs.getString("flutter.pb_url", "http://localhost:8090")
                 ?.trimEnd('/') ?: "http://localhost:8090"
-            val anchor = LocalDate.parse(
+            val anchorFallback = parseDate(
                 flutterPrefs.getString("flutter.rotation_anchor", "2026-05-18")
-                    ?: "2026-05-18"
-            )
+            ) ?: LocalDate.of(2026, 5, 18)
 
-            // ── 1. Resolve schedule for next 3 days ──────────────────────
-            val rules         = fetchCollection(pbUrl, token, "rules_base")
-            val weekdayRules  = fetchCollection(pbUrl, token, "custody_weekday_rules",
+            // ── 1. Resolve the active household config ───────────────────
+            val hid = if (myId.isNotEmpty())
+                fetchRecord(pbUrl, token, "users", myId)
+                    ?.optString("active_household")?.takeIf { it.isNotEmpty() }
+            else null
+            val cfg = buildCfg(pbUrl, token, hid, anchorFallback)
+
+            // ── 2. Resolve schedule for next 3 days ──────────────────────
+            val rules        = fetchCollection(pbUrl, token, "rules_base")
+            val weekdayRules = fetchCollection(pbUrl, token, "custody_weekday_rules",
                 filter = "active=true")
-            val today   = LocalDate.now()
+            val recurring    = fetchCollection(pbUrl, token, "custody_recurring",
+                filter = "active=true")
+
+            val today     = LocalDate.now()
             val allEvents = mutableListOf<JSONObject>()
 
             repeat(3) { i ->
@@ -88,11 +104,18 @@ class CoplanSyncWorker(
                     pbUrl, token, "manual_overrides",
                     filter = "target_date='$dateStr'"
                 )
-                val custodyRequests = fetchCollection(
+                val realCustody = fetchCollection(
                     pbUrl, token, "custody_requests",
                     filter = "date='$dateStr'&&status='accepted'"
                 )
-                allEvents += resolveDay(date, rules, overrides, weekdayRules, anchor, custodyRequests)
+                // Merge real custody with virtual recurring occurrences, exactly
+                // like the Dart engine's effectiveCustodyFor().
+                val custody = JSONArray()
+                for (k in 0 until realCustody.length()) custody.put(realCustody.getJSONObject(k))
+                for (v in virtualRecurring(date, cfg, recurring, weekdayRules, realCustody)) {
+                    custody.put(v)
+                }
+                allEvents += resolveDay(date, rules, overrides, weekdayRules, cfg, custody)
             }
 
             // Keep only events that haven't happened yet today (take first 3)
@@ -107,7 +130,7 @@ class CoplanSyncWorker(
                 if (upcoming.length() >= 3) break
             }
 
-            // ── 2. Update all widget styles ──────────────────────────────
+            // ── 3. Update all widget styles ──────────────────────────────
             widgetPrefs.edit().putString("coplan_widget_events", upcoming.toString()).apply()
             val manager = GlanceAppWidgetManager(ctx)
             manager.getGlanceIds(CoplanWidget::class.java)
@@ -117,7 +140,7 @@ class CoplanSyncWorker(
             manager.getGlanceIds(CoplanWidget3::class.java)
                 .forEach { id -> CoplanWidget3().update(ctx, id) }
 
-            // ── 3. Notify for new pickup requests ────────────────────────
+            // ── 4. Notify for new pending requests ───────────────────────
             if (myId.isNotEmpty()) notifyNewRequests(pbUrl, token, myId)
 
             Result.success()
@@ -126,17 +149,149 @@ class CoplanSyncWorker(
         }
     }
 
-    // ── Schedule resolution (mirrors Dart ResolutionEngine) ──────────────────
+    // ── Household config ──────────────────────────────────────────────────────
+
+    private fun buildCfg(
+        pbUrl: String, token: String, hid: String?, anchorFallback: LocalDate
+    ): Cfg {
+        // Legacy fallback when there's no household (pre-migration installs).
+        if (hid == null) {
+            return Cfg(
+                anchor = anchorFallback,
+                pattern = presetFor("weekly"),
+                mode = "custody",
+                evenName = "Bennet",
+                oddName = "Jana",
+                colorByName = mapOf("Bennet" to 0xFF1565C0L, "Jana" to 0xFFD81B60L),
+            )
+        }
+
+        val h = fetchRecord(pbUrl, token, "households", hid)
+        val anchor = parseDate(h?.optString("rotation_anchor")) ?: anchorFallback
+        val mode = h?.optString("mode")?.takeIf { it.isNotEmpty() } ?: "custody"
+
+        val patArr = h?.optJSONArray("rotation_pattern")
+        val pattern = if (patArr != null && patArr.length() > 0)
+            IntArray(patArr.length()) { patArr.optInt(it) }
+        else presetFor(h?.optString("rotation_scheme_type") ?: "weekly")
+
+        // Members → name, role, user id (colour from each user's preferred_color,
+        // fetched per-member to match the Dart side and respect view rules).
+        val members = fetchCollection(pbUrl, token, "household_members",
+            filter = "household='$hid'")
+
+        val palette = longArrayOf(0xFF1565C0L, 0xFFD81B60L, 0xFF00897BL, 0xFFFF8F00L)
+        val colorByName = mutableMapOf<String, Long>()
+        val nameByUserId = mutableMapOf<String, String>()
+        val parentNames = mutableListOf<String>()
+        var pi = 0
+        for (i in 0 until members.length()) {
+            val m   = members.getJSONObject(i)
+            val uid = m.optString("user")
+            val nm  = m.optString("display_name")
+            if (nm.isEmpty()) continue
+            nameByUserId[uid] = nm
+            val userColor = parseHex(
+                fetchRecord(pbUrl, token, "users", uid)?.optString("preferred_color"))
+            colorByName[nm] = userColor ?: palette[pi % palette.size]
+            pi++
+            if (m.optString("role") == "parent") parentNames += nm
+        }
+
+        val evenName = nameByUserId[h?.optString("rotation_parent_even")]
+            ?: parentNames.getOrNull(0) ?: "Parent A"
+        val oddName = nameByUserId[h?.optString("rotation_parent_odd")]
+            ?: parentNames.getOrNull(1) ?: "Parent B"
+
+        return Cfg(anchor, pattern, mode, evenName, oddName, colorByName)
+    }
+
+    /** Rotation patterns mirroring Dart RotationScheme (0 = even, 1 = odd). */
+    private fun presetFor(type: String): IntArray = when (type) {
+        "2-2-5-5"             -> intArrayOf(0,0,1,1,0,0,0,0,0,1,1,1,1,1)
+        "2-2-3"               -> intArrayOf(0,0,1,1,0,0,0,1,1,0,0,1,1,1)
+        "alternating_weekends" -> intArrayOf(0,0,0,0,0,0,0,0,0,0,0,0,1,1)
+        else                   -> intArrayOf(0,0,0,0,0,0,0,1,1,1,1,1,1,1) // weekly
+    }
+
+    // ── Owner resolution (mirrors Dart weekOwner / baseOwner) ────────────────
+
+    private fun rotationOwner(date: LocalDate, cfg: Cfg): String {
+        if (cfg.mode == "shared") return "Both"
+        val len = cfg.pattern.size.takeIf { it > 0 } ?: 14
+        val daysSince = ChronoUnit.DAYS.between(cfg.anchor, date)
+        val idx = (((daysSince % len) + len) % len).toInt()
+        return if (cfg.pattern[idx] == 0) cfg.evenName else cfg.oddName
+    }
+
+    private fun baseOwner(date: LocalDate, cfg: Cfg, weekdayRules: JSONArray): String {
+        if (cfg.mode == "shared") return "Both"
+        val dow = date.dayOfWeek.value
+        for (j in 0 until weekdayRules.length()) {
+            val wr = weekdayRules.getJSONObject(j)
+            if (wr.optInt("day_of_week") == dow) {
+                val p = wr.optString("assigned_parent")
+                if (p.isNotEmpty()) return p
+            }
+        }
+        return rotationOwner(date, cfg)
+    }
+
+    private fun colorFor(name: String, cfg: Cfg): Long =
+        if (name == "Both") 0xFF7E57C2L else (cfg.colorByName[name] ?: 0xFF607D8BL)
+
+    // ── Recurring expansion (mirrors Dart _virtualRecurringFor) ──────────────
+
+    private fun virtualRecurring(
+        date: LocalDate, cfg: Cfg, recurring: JSONArray,
+        weekdayRules: JSONArray, realCustody: JSONArray
+    ): List<JSONObject> {
+        if (date.isBefore(LocalDate.now())) return emptyList()
+        val dow  = date.dayOfWeek.value
+        val base = baseOwner(date, cfg, weekdayRules)
+        val out  = mutableListOf<JSONObject>()
+
+        for (i in 0 until recurring.length()) {
+            val a = recurring.getJSONObject(i)
+            if (a.optInt("day_of_week") != dow) continue
+            val start = parseDate(a.optString("start_date")) ?: continue
+            if (date.isBefore(start)) continue
+            val toParent = a.optString("to_parent").takeIf { it.isNotEmpty() } ?: continue
+            if (base == toParent) continue   // recipient already owns the day
+
+            val child = a.optString("child_name", "All")
+            var covered = false
+            for (k in 0 until realCustody.length()) {
+                val c = realCustody.getJSONObject(k).optString("child_name", "All")
+                if (c == child || c == "All" || child == "All") { covered = true; break }
+            }
+            if (covered) continue
+
+            out += JSONObject().apply {
+                put("from_parent",      base)
+                put("to_parent",        toParent)
+                put("date",             date.format(DateTimeFormatter.ISO_LOCAL_DATE))
+                put("child_name",       child)
+                put("pickup_time",      a.optString("pickup_time", "00:00"))
+                put("return_time",      a.optString("return_time", ""))
+                put("return_time_tbd",  a.optBoolean("return_time_tbd", false))
+                put("status",           "accepted")
+            }
+        }
+        return out
+    }
+
+    // ── Schedule resolution (mirrors Dart ResolutionEngine.resolveDay) ───────
 
     private fun resolveDay(
         date: LocalDate,
         rules: JSONArray,
         overrides: JSONArray,
         weekdayRules: JSONArray,
-        anchor: LocalDate,
-        custodyRequests: JSONArray = JSONArray()
+        cfg: Cfg,
+        custodyRequests: JSONArray
     ): List<JSONObject> {
-        val dow     = date.dayOfWeek.value   // ISO: 1=Mon … 7=Sun
+        val dow     = date.dayOfWeek.value
         val results = mutableListOf<JSONObject>()
 
         for (i in 0 until rules.length()) {
@@ -148,9 +303,7 @@ class CoplanSyncWorker(
             val activity  = rule.optString("activity", "")
             val location  = rule.optString("location", "")
 
-            // Priority 1 — non-adhoc manual override only
-            // Adhoc overrides are standalone one-off events, not parent substitutions —
-            // mirroring Dart's _resolveRule which filters with !o.isAdhoc.
+            // Priority 1 — non-adhoc manual override
             var parent: String? = null
             for (j in 0 until overrides.length()) {
                 val ov       = overrides.getJSONObject(j)
@@ -158,46 +311,27 @@ class CoplanSyncWorker(
                 val ovAdhoc  = ov.optBoolean("is_adhoc", false) || ovReason.isNotEmpty()
                 if (ovAdhoc) continue
                 val ovChild  = ov.optString("child_name", "All")
-                if (ovChild == childName || ovChild == "All") {
+                if (ovChild == childName || ovChild == "All" || childName == "All") {
                     parent = ov.optString("assigned_parent")
                     break
                 }
             }
 
-            // Priority 2 — recurring weekday rule (from custody_weekday_rules)
-            if (parent == null) {
-                val dow = date.dayOfWeek.value // ISO: 1=Mon … 7=Sun
-                for (j in 0 until weekdayRules.length()) {
-                    val wr = weekdayRules.getJSONObject(j)
-                    if (wr.optInt("day_of_week") == dow) {
-                        parent = wr.optString("assigned_parent").takeIf { it.isNotEmpty() }
-                        break
-                    }
-                }
-            }
+            // Priority 2+3 — weekday rule ?? rotation (baseOwner)
+            if (parent == null) parent = baseOwner(date, cfg, weekdayRules)
 
-            // Priority 3 — base rotation (even weeks = Bennet, from anchor Monday)
-            if (parent == null) {
-                val monday       = date.with(DayOfWeek.MONDAY)
-                val anchorMonday = anchor.with(DayOfWeek.MONDAY)
-                val weeks        = ChronoUnit.WEEKS.between(anchorMonday, monday)
-                parent           = if (weeks % 2 == 0L) "Bennet" else "Jana"
-            }
-
-            // Priority 4 — accepted custody request (mirrors Dart parentAtTime)
-            // A window or day-transfer may hand responsibility to the other parent
-            // at or after the event time, exactly as ResolutionEngine does in Dart.
+            // Priority 4 — accepted custody (real + virtual recurring)
             val eventMin = run {
                 val parts = time.split(":")
                 (parts[0].toIntOrNull() ?: 0) * 60 + (parts[1].toIntOrNull() ?: 0)
             }
             var custodyParent: String? = null
-            // Check windows first (pickup ≤ event < return)
+            // Windows first (pickup ≤ event < return)
             for (k in 0 until custodyRequests.length()) {
-                val r      = custodyRequests.getJSONObject(k)
-                val rt     = r.optString("return_time").takeIf { it.isNotEmpty() }
-                val rtTbd  = r.optBoolean("return_time_tbd", false)
-                if (rt == null && !rtTbd) continue   // day transfer — skip here
+                val r     = custodyRequests.getJSONObject(k)
+                val rt    = r.optString("return_time").takeIf { it.isNotEmpty() }
+                val rtTbd = r.optBoolean("return_time_tbd", false)
+                if (rt == null && !rtTbd) continue
                 val pParts    = r.optString("pickup_time", "00:00").split(":")
                 val pickupMin = (pParts[0].toIntOrNull() ?: 0) * 60 + (pParts[1].toIntOrNull() ?: 0)
                 val returnMin = if (rtTbd || rt == null) 24 * 60 else {
@@ -209,13 +343,13 @@ class CoplanSyncWorker(
                     break
                 }
             }
-            // Then day transfers (event time ≥ pickup time → to_parent takes over)
+            // Then day transfers (event ≥ pickup → to_parent takes over)
             if (custodyParent == null) {
                 for (k in 0 until custodyRequests.length()) {
                     val r     = custodyRequests.getJSONObject(k)
                     val rt    = r.optString("return_time").takeIf { it.isNotEmpty() }
                     val rtTbd = r.optBoolean("return_time_tbd", false)
-                    if (rt != null || rtTbd) continue  // window — already handled
+                    if (rt != null || rtTbd) continue
                     val pParts    = r.optString("pickup_time", "00:00").split(":")
                     val pickupMin = (pParts[0].toIntOrNull() ?: 0) * 60 + (pParts[1].toIntOrNull() ?: 0)
                     if (eventMin >= pickupMin) {
@@ -227,82 +361,47 @@ class CoplanSyncWorker(
             val finalParent = custodyParent ?: parent!!
 
             results += JSONObject().apply {
-                put("date",            date.format(DateTimeFormatter.ISO_LOCAL_DATE))
-                put("time",            time)
-                put("activity",        activity)
-                put("location",        location)
-                put("childName",       childName)
-                put("parent",          finalParent)
-                put("parentColorValue",
-                    if (finalParent == "Bennet") 0xFF1565C0.toLong()
-                    else                         0xFFD81B60.toLong()
-                )
+                put("date",             date.format(DateTimeFormatter.ISO_LOCAL_DATE))
+                put("time",             time)
+                put("activity",         activity)
+                put("location",         location)
+                put("childName",        childName)
+                put("parent",           finalParent)
+                put("parentColorValue", colorFor(finalParent, cfg))
             }
         }
 
         // ── Ad-hoc one-off events ─────────────────────────────────────────
-        // These are standalone events not tied to any base rule — they come
-        // from the "One-off event" form on the calendar screen.
-        //
-        // PocketBase may silently drop the `is_adhoc` field if it isn't in
-        // the collection schema.  Use a reliable fallback: createSharedEvent()
-        // always writes a non-empty `reason` field, so treat any override with
-        // a non-empty reason as an ad-hoc event.
         for (j in 0 until overrides.length()) {
             val ov     = overrides.getJSONObject(j)
             val reason = ov.optString("reason")
             val isAdhoc = ov.optBoolean("is_adhoc", false) || reason.isNotEmpty()
             if (!isAdhoc) continue
 
-            // Prefer the explicit assigned_parent; fall back to weekday rule / rotation.
-            var parent: String? = ov.optString("assigned_parent").takeIf { it.isNotEmpty() }
-            if (parent == null) {
-                for (k in 0 until weekdayRules.length()) {
-                    val wr = weekdayRules.getJSONObject(k)
-                    if (wr.optInt("day_of_week") == dow) {
-                        parent = wr.optString("assigned_parent").takeIf { it.isNotEmpty() }
-                        break
-                    }
-                }
-            }
-            if (parent == null) {
-                val monday       = date.with(DayOfWeek.MONDAY)
-                val anchorMonday = anchor.with(DayOfWeek.MONDAY)
-                val weeks        = ChronoUnit.WEEKS.between(anchorMonday, monday)
-                parent           = if (weeks % 2 == 0L) "Bennet" else "Jana"
-            }
-
-            // `reason` is a required schema field that createSharedEvent() always
-            // mirrors the activity name into.  Prefer `activity` if present
-            // (it may not be in the schema), otherwise fall back to `reason`.
+            val parent = ov.optString("assigned_parent").takeIf { it.isNotEmpty() }
+                ?: baseOwner(date, cfg, weekdayRules)
             val activity = ov.optString("activity").ifEmpty { reason }
 
             results += JSONObject().apply {
-                put("date",     date.format(DateTimeFormatter.ISO_LOCAL_DATE))
-                put("time",     ov.optString("override_time", "09:00"))
-                put("activity", activity)
-                put("location", ov.optString("location", ""))
-                put("childName", ov.optString("child_name", "All"))
-                put("parent",   parent)
-                put("parentColorValue",
-                    if (parent == "Bennet") 0xFF1565C0.toLong()
-                    else                    0xFFD81B60.toLong()
-                )
+                put("date",             date.format(DateTimeFormatter.ISO_LOCAL_DATE))
+                put("time",             ov.optString("override_time", "09:00"))
+                put("activity",         activity)
+                put("location",         ov.optString("location", ""))
+                put("childName",        ov.optString("child_name", "All"))
+                put("parent",           parent)
+                put("parentColorValue", colorFor(parent, cfg))
             }
         }
 
-        // ── Accepted custody-request events ──────────────────────────────────
-        // Each accepted request produces a banner event identical to what the
-        // Dart ResolutionEngine emits (e.g. "Bennet has Henri" or
-        // "Bennet has Henri · 16:00–18:00" for a windowed transfer).
+        // ── Accepted custody-request banners (real + virtual recurring) ──────
         for (j in 0 until custodyRequests.length()) {
-            val r            = custodyRequests.getJSONObject(j)
-            val toParent     = r.optString("to_parent")
+            val r        = custodyRequests.getJSONObject(j)
+            val toParent = r.optString("to_parent")
             if (toParent.isEmpty()) continue
-            val childName    = r.optString("child_name", "All")
-            val pickupTime   = r.optString("pickup_time", "08:00")
-            val returnTime   = r.optString("return_time").takeIf { it.isNotEmpty() }
-            val returnTbd    = r.optBoolean("return_time_tbd", false)
+            val childName     = r.optString("child_name", "All")
+            val pickupTime    = r.optString("pickup_time", "08:00")
+            val returnTime    = r.optString("return_time").takeIf { it.isNotEmpty() }
+            val returnTbd     = r.optBoolean("return_time_tbd", false)
             val isDayTransfer = returnTime == null && !returnTbd
 
             val label = if (isDayTransfer)
@@ -313,22 +412,18 @@ class CoplanSyncWorker(
             }
 
             results += JSONObject().apply {
-                put("date",            date.format(DateTimeFormatter.ISO_LOCAL_DATE))
-                put("time",            pickupTime)
-                put("activity",        label)
-                put("location",        "")
-                put("childName",       childName)
-                put("parent",          toParent)
-                put("parentColorValue",
-                    if (toParent == "Bennet") 0xFF1565C0.toLong()
-                    else                      0xFFD81B60.toLong()
-                )
-                put("isCustody",       true)
+                put("date",             date.format(DateTimeFormatter.ISO_LOCAL_DATE))
+                put("time",             pickupTime)
+                put("activity",         label)
+                put("location",         "")
+                put("childName",        childName)
+                put("parent",           toParent)
+                put("parentColorValue", colorFor(toParent, cfg))
+                put("isCustody",        true)
             }
         }
 
-        // Sort by time; tie-break: custody banners sort before other events at the
-        // same minute (mirrors Dart ResolutionEngine sort with custody-first tie-break).
+        // Sort by time; custody banners sort before others at the same minute.
         results.sortWith { a, b ->
             fun mins(o: JSONObject): Int {
                 val p = o.getString("time").split(":")
@@ -356,7 +451,6 @@ class CoplanSyncWorker(
         )
         if (pending.length() == 0) return
 
-        // Compare with IDs we already notified about
         val seenRaw = workerPrefs.getString("seen_request_ids", "[]") ?: "[]"
         val seen    = (0 until JSONArray(seenRaw).length())
             .map { JSONArray(seenRaw).getString(it) }.toMutableSet()
@@ -372,14 +466,13 @@ class CoplanSyncWorker(
                 if (firstBody.isEmpty()) {
                     val child = r.optString("child_name", "the children")
                     val date  = r.optString("date", "an upcoming date")
-                    firstBody = "Your co-parent requests you handle $child on $date"
+                    firstBody = "You're asked to handle $child on $date"
                 }
             }
         }
 
         if (newIds.isEmpty()) return
 
-        // Persist all current pending IDs as "seen" so we don't re-fire next cycle
         val allIds = JSONArray().also {
             for (i in 0 until pending.length()) it.put(pending.getJSONObject(i).optString("id"))
         }
@@ -387,7 +480,7 @@ class CoplanSyncWorker(
 
         showNotification(
             id    = 1,
-            title = "New Custody Request" + if (newIds.size > 1) " (${newIds.size})" else "",
+            title = "New Pickup Request" + if (newIds.size > 1) " (${newIds.size})" else "",
             body  = firstBody
         )
     }
@@ -422,25 +515,47 @@ class CoplanSyncWorker(
         )
     }
 
-    // ── PocketBase REST helper ────────────────────────────────────────────────
+    // ── PocketBase REST helpers ───────────────────────────────────────────────
 
     private fun fetchCollection(
-        pbUrl: String,
-        token: String,
-        collection: String,
-        filter: String = ""
+        pbUrl: String, token: String, collection: String, filter: String = ""
     ): JSONArray {
         val query = if (filter.isNotEmpty())
             "?filter=${URLEncoder.encode(filter, "UTF-8")}&perPage=200"
         else "?perPage=200"
+        return try {
+            val conn = URL("$pbUrl/api/collections/$collection/records$query")
+                .openConnection() as HttpURLConnection
+            conn.setRequestProperty("Authorization", token)
+            conn.connectTimeout = 10_000
+            conn.readTimeout    = 10_000
+            JSONObject(conn.inputStream.bufferedReader().readText())
+                .optJSONArray("items") ?: JSONArray()
+        } catch (_: Exception) {
+            JSONArray()
+        }
+    }
 
-        val conn = URL("$pbUrl/api/collections/$collection/records$query")
+    private fun fetchRecord(
+        pbUrl: String, token: String, collection: String, id: String
+    ): JSONObject? = try {
+        val conn = URL("$pbUrl/api/collections/$collection/records/$id")
             .openConnection() as HttpURLConnection
         conn.setRequestProperty("Authorization", token)
         conn.connectTimeout = 10_000
         conn.readTimeout    = 10_000
-        return JSONObject(conn.inputStream.bufferedReader().readText())
-            .optJSONArray("items") ?: JSONArray()
+        JSONObject(conn.inputStream.bufferedReader().readText())
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun parseDate(s: String?): LocalDate? =
+        try { if (s.isNullOrEmpty()) null else LocalDate.parse(s.substring(0, 10)) }
+        catch (_: Exception) { null }
+
+    private fun parseHex(s: String?): Long? {
+        if (s == null || !s.startsWith("#") || s.length != 7) return null
+        return try { 0xFF000000L or s.substring(1).toLong(16) } catch (_: Exception) { null }
     }
 
     // ── Companion ────────────────────────────────────────────────────────────

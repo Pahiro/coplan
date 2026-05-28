@@ -105,6 +105,16 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
     ref.invalidateSelf();
   }
 
+  /// Transfer household ownership to another member (a parent's user id).
+  Future<void> updateOwner(String newOwnerUserId) async {
+    final household = state.valueOrNull;
+    if (household == null) return;
+    await pb.collection('households').update(household.id, body: {
+      'owner': newOwnerUserId,
+    });
+    ref.invalidateSelf();
+  }
+
   /// Rename the current household.
   Future<void> updateName(String name) async {
     final household = state.valueOrNull;

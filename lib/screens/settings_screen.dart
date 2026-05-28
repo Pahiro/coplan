@@ -151,10 +151,21 @@ class SettingsScreen extends ConsumerWidget {
             ),
             // Only show rotation settings in custody mode
             if ((ref.watch(householdProvider).valueOrNull?.mode ?? 'custody') == 'custody') ...[
+              _SectionHeader('Rotation start'),
+              Text(
+                'The date the cycle begins (Day 1) and which parent has the '
+                'children that day.',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.grey),
+              ),
+              const SizedBox(height: 8),
+              const _RotationAnchorCard(),
+              const SizedBox(height: 24),
               _SectionHeader('Rotation scheme'),
               Text(
-                'How custody days rotate between parents. '
-                'The anchor date marks Day 1 of the cycle.',
+                'How custody days rotate between parents from the start date above.',
                 style: Theme.of(context)
                     .textTheme
                     .bodySmall
@@ -283,6 +294,24 @@ class _HouseholdSection extends ConsumerWidget {
                   ],
                 ),
               )),
+          // Transfer ownership — owner only, when another parent exists
+          if (iAmOwner &&
+              household.parents.any((p) => p.userId != household.ownerId)) ...[
+            const Divider(height: 1),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.swap_horiz),
+              title: const Text('Transfer ownership'),
+              subtitle: const Text('Make another parent the household owner'),
+              onTap: () {
+                final candidates = household.parents
+                    .where((p) => p.userId != household.ownerId)
+                    .map((p) => MapEntry(p.userId, p.displayName))
+                    .toList();
+                _transferOwner(context, ref, candidates);
+              },
+            ),
+          ],
           const Divider(height: 1),
 
           // Invite actions
@@ -341,6 +370,47 @@ class _HouseholdSection extends ConsumerWidget {
     );
     if (name != null && name.trim().isNotEmpty) {
       await ref.read(householdProvider.notifier).updateName(name.trim());
+    }
+  }
+
+  Future<void> _transferOwner(BuildContext context, WidgetRef ref,
+      List<MapEntry<String, String>> candidates) async {
+    if (candidates.isEmpty) return;
+    final chosen = await showDialog<MapEntry<String, String>>(
+      context: context,
+      builder: (_) => SimpleDialog(
+        title: const Text('Transfer ownership to'),
+        children: candidates
+            .map((c) => SimpleDialogOption(
+                  onPressed: () => Navigator.pop(context, c),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Text(c.value),
+                  ),
+                ))
+            .toList(),
+      ),
+    );
+    if (chosen == null || !context.mounted) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Transfer ownership?'),
+        content: Text(
+            '${chosen.value} will become the household owner. You will no longer '
+            'be able to manage members or remove people.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Transfer')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await ref.read(householdProvider.notifier).updateOwner(chosen.key);
     }
   }
 
@@ -794,6 +864,116 @@ class _ColorRow extends StatelessWidget {
 }
 
 /// Dropdown to select a rotation scheme; persists choice to PocketBase.
+/// Sets the rotation anchor (cycle Day 1) and which parent owns that day.
+class _RotationAnchorCard extends ConsumerWidget {
+  const _RotationAnchorCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final household = ref.watch(householdProvider).valueOrNull;
+    if (household == null) {
+      return const Card(
+        margin: EdgeInsets.only(bottom: 8),
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Text('No active household.',
+              style: TextStyle(color: Colors.grey)),
+        ),
+      );
+    }
+
+    final parents = household.parents;
+    final ids     = parents.map((p) => p.userId).toSet();
+    final anchor  = household.rotationAnchorDate;
+    // Resolve current even/odd ids, guarding against ids that aren't current
+    // members (so SegmentedButton's selection always matches a segment).
+    final evenId = (household.rotationParentEvenId != null &&
+            ids.contains(household.rotationParentEvenId))
+        ? household.rotationParentEvenId!
+        : (parents.isNotEmpty ? parents.first.userId : '');
+    final oddId = (household.rotationParentOddId != null &&
+            ids.contains(household.rotationParentOddId))
+        ? household.rotationParentOddId!
+        : (parents.length > 1 ? parents[1].userId : evenId);
+
+    final fmt = DateFormat('EEE, d MMM yyyy');
+
+    Future<void> save(String anchorIso, String even, String odd) =>
+        ref.read(householdProvider.notifier).updateRotation(
+              anchor: anchorIso,
+              evenParentUserId: even,
+              oddParentUserId: odd,
+            );
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            InkWell(
+              borderRadius: BorderRadius.circular(4),
+              onTap: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: anchor,
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime(2100),
+                  helpText: 'Cycle start date (Day 1)',
+                );
+                if (picked != null) {
+                  await save(DateFormat('yyyy-MM-dd').format(picked), evenId, oddId);
+                }
+              },
+              child: InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Cycle start (Day 1)',
+                  prefixIcon: Icon(Icons.event_outlined),
+                  border: OutlineInputBorder(),
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                ),
+                child: Text(fmt.format(anchor)),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text('Who has the children on Day 1?',
+                style: TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 6),
+            if (parents.length < 2)
+              Text(
+                parents.isEmpty
+                    ? 'Add a parent first.'
+                    : '${parents.first.displayName} — invite the co-parent to alternate weeks.',
+                style: const TextStyle(fontSize: 13),
+              )
+            else
+              SegmentedButton<String>(
+                segments: parents
+                    .map((p) => ButtonSegment(
+                        value: p.userId, label: Text(p.displayName)))
+                    .toList(),
+                selected: {evenId},
+                onSelectionChanged: (s) async {
+                  final newEven = s.first;
+                  final newOdd = parents
+                      .firstWhere((p) => p.userId != newEven,
+                          orElse: () => parents.first)
+                      .userId;
+                  await save(
+                      DateFormat('yyyy-MM-dd').format(anchor), newEven, newOdd);
+                },
+                style: SegmentedButton.styleFrom(
+                    visualDensity: VisualDensity.compact),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _RotationSchemePicker extends StatelessWidget {
   final WidgetRef ref;
   const _RotationSchemePicker({required this.ref});
