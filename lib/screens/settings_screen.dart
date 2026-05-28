@@ -10,6 +10,7 @@ import '../providers/colors_provider.dart';
 import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 import '../providers/theme_provider.dart';
+import 'export_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -163,6 +164,20 @@ class SettingsScreen extends ConsumerWidget {
               const SizedBox(height: 8),
               const _RecurringRulesSection(),
             ], // end custody-only section
+            const SizedBox(height: 24),
+            _SectionHeader('Data'),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.download),
+                title: const Text('Export schedule'),
+                subtitle: const Text('Download as CSV for Excel / Sheets'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ExportScreen()),
+                ),
+              ),
+            ),
           ],
         ),
       ),
