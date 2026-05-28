@@ -30,7 +30,7 @@ cronAdd("freezeRecurring", "5 0 * * *", () => {
 
         // ── Process each household independently ────────────────────────────
         let households = [];
-        try { households = dao.findRecordsByFilter("households", "", "", 500, 0); }
+        try { households = dao.findRecordsByFilter("households", "id != ''", "", 500, 0); }
         catch (_) { households = []; }
 
         // Fallback: if no households exist yet (pre-migration), use legacy
