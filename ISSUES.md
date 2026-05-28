@@ -1,5 +1,8 @@
 # Open Issues — Resolution-engine review
 
+> ✅ **All issues resolved** — fixed in commits `ce1209c`, `0c95af4`, and subsequent
+> roadmap commits. See individual GitHub issues for detailed fix descriptions.
+
 Findings from the full logic audit of the schedule resolution engine. Also filed
 as GitHub issues #1–#7 under the **"Resolution-engine review"** milestone:
 <https://github.com/Pahiro/coplan/issues>
