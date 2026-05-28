@@ -88,6 +88,21 @@ class TimelineCard extends ConsumerWidget {
                         ],
                       ),
                     ],
+                    if (event.recurringId != null) ...[
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Icon(Icons.event_repeat_outlined,
+                              size: 12, color: Colors.grey[500]),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Repeats weekly',
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.grey[600]),
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 6),
                     // Child chip row
                     _ChildChipRow(childName: event.childName, colors: colors),
@@ -184,7 +199,8 @@ class TimelineCard extends ConsumerWidget {
                   ],
                   if (event.ruleId != null ||
                       event.overrideId != null ||
-                      event.custodyRequestId != null) ...[
+                      event.custodyRequestId != null ||
+                      event.recurringId != null) ...[
                     const SizedBox(height: 2),
                     _EventMenu(event: event),
                   ],
@@ -210,6 +226,7 @@ class _EventMenu extends ConsumerWidget {
     final isAdhocOverride = event.overrideId != null && event.isAdhoc;
     final isNonAdhocOverride = event.overrideId != null && !event.isAdhoc;
     final isRule = event.ruleId != null && event.overrideId == null;
+    final isRecurring = event.recurringId != null;
 
     return SizedBox(
       height: 24,
@@ -222,7 +239,21 @@ class _EventMenu extends ConsumerWidget {
             color: Theme.of(context).colorScheme.onSurfaceVariant),
         onSelected: (action) => _handle(context, ref, action),
         itemBuilder: (_) => [
-          if (isRule || isAdhocOverride || isCustodyEvent)
+          // Recurring (virtual) occurrences only offer "Stop repeating" — the
+          // pattern is edited from the source request's repeat toggle, and a
+          // single week is changed by adding a one-off request for that date.
+          if (isRecurring)
+            const PopupMenuItem(
+              value: _MenuAction.stopRepeating,
+              child: ListTile(
+                leading: Icon(Icons.event_repeat_outlined, color: Colors.red),
+                title: Text('Stop repeating',
+                    style: TextStyle(color: Colors.red)),
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+              ),
+            ),
+          if (!isRecurring && (isRule || isAdhocOverride || isCustodyEvent))
             const PopupMenuItem(
               value: _MenuAction.edit,
               child: ListTile(
@@ -232,7 +263,7 @@ class _EventMenu extends ConsumerWidget {
                 dense: true,
               ),
             ),
-          if (isNonAdhocOverride)
+          if (!isRecurring && isNonAdhocOverride)
             const PopupMenuItem(
               value: _MenuAction.removeOverride,
               child: ListTile(
@@ -242,15 +273,16 @@ class _EventMenu extends ConsumerWidget {
                 dense: true,
               ),
             ),
-          const PopupMenuItem(
-            value: _MenuAction.delete,
-            child: ListTile(
-              leading: Icon(Icons.delete_outline, color: Colors.red),
-              title: Text('Delete', style: TextStyle(color: Colors.red)),
-              contentPadding: EdgeInsets.zero,
-              dense: true,
+          if (!isRecurring)
+            const PopupMenuItem(
+              value: _MenuAction.delete,
+              child: ListTile(
+                leading: Icon(Icons.delete_outline, color: Colors.red),
+                title: Text('Delete', style: TextStyle(color: Colors.red)),
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -258,6 +290,25 @@ class _EventMenu extends ConsumerWidget {
 
   Future<void> _handle(
       BuildContext context, WidgetRef ref, _MenuAction action) async {
+    // ── Recurring (virtual) occurrences ───────────────────────────────────────
+    if (event.recurringId != null) {
+      if (action == _MenuAction.stopRepeating) {
+        final confirm = await _confirmDialog(
+          context,
+          title: 'Stop repeating?',
+          body: 'Removes this standing arrangement from all future weeks. '
+              'Past occurrences already recorded are kept.',
+          action: 'Stop',
+        );
+        if (confirm && context.mounted) {
+          await ref
+              .read(recurringArrangementsNotifierProvider.notifier)
+              .delete(event.recurringId!);
+        }
+      }
+      return;
+    }
+
     // ── Custody request events ────────────────────────────────────────────────
     if (event.custodyRequestId != null) {
       final requests = ref.read(custodyRequestsProvider).valueOrNull ?? [];
@@ -294,6 +345,10 @@ class _EventMenu extends ConsumerWidget {
     }
 
     switch (action) {
+      case _MenuAction.stopRepeating:
+        // Handled above for recurring events; unreachable here.
+        return;
+
       case _MenuAction.edit:
         await showModalBottomSheet<void>(
           context: context,
@@ -365,7 +420,7 @@ class _EventMenu extends ConsumerWidget {
   }
 }
 
-enum _MenuAction { edit, delete, removeOverride }
+enum _MenuAction { edit, delete, removeOverride, stopRepeating }
 
 class _ChildChipRow extends StatelessWidget {
   final String childName;

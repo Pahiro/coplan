@@ -6,7 +6,9 @@ import 'package:intl/intl.dart';
 import '../engine/resolution_engine.dart';
 import '../models/app_colors.dart';
 import '../models/custody_request.dart';
+import '../models/recurring_arrangement.dart';
 import '../models/resolved_event.dart';
+import '../models/weekday_rule.dart';
 import '../providers/colors_provider.dart';
 import '../providers/custody_provider.dart';
 import '../providers/schedule_provider.dart';
@@ -32,6 +34,10 @@ class WeekStrip extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colors          = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
     final rulesAsync      = ref.watch(baseRulesProvider);
+    final weekdayRules    = ref.watch(weekdayRulesProvider).valueOrNull
+            ?? const <WeekdayRule>[];
+    final recurring       = ref.watch(recurringArrangementsProvider).valueOrNull
+            ?? const <RecurringArrangement>[];
     final custodyRequests = ref.watch(custodyRequestsProvider).valueOrNull
             ?.where((r) => r.isAccepted)
             .toList() ??
@@ -42,9 +48,11 @@ class WeekStrip extends ConsumerWidget {
       error: (_, __) => const SizedBox(height: 72),
       data: (rules) {
         final engine = ResolutionEngine(
-            baseRules: rules,
-            overrides: const [],
-            custodyRequests: custodyRequests);
+            baseRules:             rules,
+            overrides:             const [],
+            custodyRequests:       custodyRequests,
+            weekdayRules:          weekdayRules,
+            recurringArrangements: recurring);
         return SizedBox(
           height: 72,
           child: Row(
@@ -58,23 +66,32 @@ class WeekStrip extends ConsumerWidget {
 
               if (window != null) {
                 final windowParent = parentFromString(window.toParent);
-                if (engine.windowCoversAllEvents(day)) {
-                  // Window covers every event → solid window-recipient colour.
+                // Use solid window-recipient colour only when all events are
+                // covered AND the window has no definite return time.  If a
+                // return time is set the base owner gets the kids back, so
+                // show a split even when all scheduled events fall inside the
+                // window.
+                final windowHasDefiniteReturn =
+                    !window.returnTimeTbd && window.returnTime != null;
+                if (engine.windowCoversAllEvents(day) && !windowHasDefiniteReturn) {
                   effectiveOwner = windowParent;
                 } else {
-                  // Partial overlap → diagonal split.
+                  // Partial overlap OR window ends at a known time → split.
                   windowToColor = colors.parentColor(windowParent);
                 }
               } else {
-                // Partial-day transfer (pickup after midnight) → split between
-                // the base day owner and the transfer recipient.
-                final transfer = custodyRequests.firstWhereOrNull(
-                    (r) => r.isDayTransfer && _sameDay(day, r.date));
+                // Partial-day transfer (pickup after midnight) → split.
+                // Use fromParent/toParent directly — avoids weekday rules
+                // incorrectly overriding the "before handover" half when the
+                // standing rule and the same-day transfer point to the same
+                // parent.  dayTransferFor() also surfaces virtual recurring
+                // occurrences so future weeks render the same split.
+                final transfer = engine.dayTransferFor(day);
                 if (transfer != null) {
                   final p = transfer.pickupTime.split(':');
                   final pickupMin = int.parse(p[0]) * 60 + int.parse(p[1]);
                   if (pickupMin > 0) {
-                    effectiveOwner = engine.baseOwner(day);
+                    effectiveOwner = parentFromString(transfer.fromParent);
                     windowToColor  = colors.parentColor(
                         parentFromString(transfer.toParent));
                   }

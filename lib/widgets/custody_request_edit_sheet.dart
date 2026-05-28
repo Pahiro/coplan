@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../models/custody_request.dart';
+import '../models/recurring_arrangement.dart';
 import '../models/weekday_rule.dart';
 import '../providers/custody_provider.dart';
 import '../providers/schedule_provider.dart';
@@ -47,9 +48,14 @@ class _CustodyRequestEditSheetState
     _toParentCollects = r.toParentCollects;
     _toParentReturns  = r.toParentReturns;
     _noteCtrl.text    = r.note ?? '';
-    // Reflect whether a weekday rule already exists for this day.
-    final rules = ref.read(weekdayRulesProvider).valueOrNull ?? <WeekdayRule>[];
-    _repeatWeekly = rules.any((wr) => wr.active && wr.dayOfWeek == r.date.weekday);
+    // Reflect whether a recurring arrangement (or a stale weekday rule) already
+    // covers this weekday for this recipient.
+    final rules        = ref.read(weekdayRulesProvider).valueOrNull ?? <WeekdayRule>[];
+    final arrangements = ref.read(recurringArrangementsProvider).valueOrNull
+        ?? <RecurringArrangement>[];
+    _repeatWeekly = arrangements.any((a) =>
+            a.active && a.dayOfWeek == r.date.weekday && a.toParent == r.toParent) ||
+        rules.any((wr) => wr.active && wr.dayOfWeek == r.date.weekday);
   }
 
   @override
@@ -105,20 +111,34 @@ class _CustodyRequestEditSheetState
             toParentReturns:  _toParentReturns,
           );
 
-      // Sync the weekday rule to match the toggle state.
+      // Sync the repeat setting via a logic-based recurring arrangement.  A
+      // single rule is expanded by the engine for future weeks (only where the
+      // other parent owns the day) and frozen into history as days pass.
       if (!_hasReturnTime) {
-        final rules = ref.read(weekdayRulesProvider).valueOrNull ?? <WeekdayRule>[];
-        final existing = rules.firstWhereOrNull(
+        // Clean up any stale full-day weekday rule from the legacy approach.
+        final rules     = ref.read(weekdayRulesProvider).valueOrNull ?? <WeekdayRule>[];
+        final staleRule = rules.firstWhereOrNull(
             (wr) => wr.active && wr.dayOfWeek == _date.weekday);
-        if (_repeatWeekly && existing == null) {
-          await ref.read(weekdayRulesNotifierProvider.notifier).create(
-                dayOfWeek:      _date.weekday,
-                assignedParent: widget.request.toParent,
-                reason:         _noteCtrl.text,
-              );
-        } else if (!_repeatWeekly && existing != null) {
-          await ref.read(weekdayRulesNotifierProvider.notifier)
-              .delete(existing.id);
+        if (staleRule != null) {
+          await ref.read(weekdayRulesNotifierProvider.notifier).delete(staleRule.id);
+        }
+
+        final recurring = ref.read(recurringArrangementsNotifierProvider.notifier);
+        if (_repeatWeekly) {
+          await recurring.upsert(
+            dayOfWeek:        _date.weekday,
+            toParent:         widget.request.toParent,
+            childName:        _child,
+            pickupTime:       _fmtTime(_pickupTime),
+            returnTime:       null,
+            returnTimeTbd:    false,
+            toParentCollects: _toParentCollects,
+            toParentReturns:  false,
+            startDate:        _isoDate(_date),
+            note:             _noteCtrl.text.isEmpty ? null : _noteCtrl.text,
+          );
+        } else {
+          await recurring.deleteForDay(_date.weekday);
         }
       }
 

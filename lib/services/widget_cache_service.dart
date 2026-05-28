@@ -9,6 +9,7 @@ import '../engine/resolution_engine.dart';
 import '../models/base_rule.dart';
 import '../models/custody_request.dart';
 import '../models/manual_override.dart';
+import '../models/recurring_arrangement.dart';
 import '../models/resolved_event.dart';
 import '../models/weekday_rule.dart';
 
@@ -24,7 +25,8 @@ class WidgetCacheService {
     try {
       final rules        = await _fetchBaseRules();
       final weekdayRules = await _fetchWeekdayRules();
-      final upcoming     = await _nextUpcomingEvents(rules, weekdayRules);
+      final recurring    = await _fetchRecurring();
+      final upcoming     = await _nextUpcomingEvents(rules, weekdayRules, recurring);
 
       final json = jsonEncode(upcoming.map((e) => e.toJson()).toList());
       await HomeWidget.saveWidgetData<String>(AppConstants.widgetCacheKey, json);
@@ -41,6 +43,7 @@ class WidgetCacheService {
   static Future<List<ResolvedEvent>> _nextUpcomingEvents(
     List<BaseRule> rules,
     List<WeekdayRule> weekdayRules,
+    List<RecurringArrangement> recurring,
   ) async {
     final now       = DateTime.now();
     final nowMinutes = now.hour * 60 + now.minute;
@@ -51,10 +54,11 @@ class WidgetCacheService {
       final overrides = await _fetchOverridesForDate(date);
       final custody   = await _fetchCustodyForDate(date);
       final dayEvents = ResolutionEngine(
-        baseRules:       rules,
-        overrides:       overrides,
-        custodyRequests: custody,
-        weekdayRules:    weekdayRules,
+        baseRules:             rules,
+        overrides:             overrides,
+        custodyRequests:       custody,
+        weekdayRules:          weekdayRules,
+        recurringArrangements: recurring,
       ).resolveDay(date);
       events.addAll(dayEvents);
     }
@@ -81,6 +85,19 @@ class WidgetCacheService {
           .collection('custody_weekday_rules')
           .getFullList(filter: 'active = true');
       return records.map((r) => WeekdayRule.fromRecord(r.toJson())).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<List<RecurringArrangement>> _fetchRecurring() async {
+    try {
+      final records = await pb
+          .collection('custody_recurring')
+          .getFullList(filter: 'active = true');
+      return records
+          .map((r) => RecurringArrangement.fromRecord(r.toJson()))
+          .toList();
     } catch (_) {
       return [];
     }

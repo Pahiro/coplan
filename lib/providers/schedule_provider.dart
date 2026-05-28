@@ -6,6 +6,7 @@ import '../engine/resolution_engine.dart';
 import '../models/base_rule.dart';
 import '../models/custody_request.dart';
 import '../models/manual_override.dart';
+import '../models/recurring_arrangement.dart';
 import '../models/resolved_event.dart';
 import '../models/weekday_rule.dart';
 
@@ -29,6 +30,22 @@ final weekdayRulesProvider = FutureProvider<List<WeekdayRule>>((ref) async {
   }
 });
 
+final recurringArrangementsProvider =
+    FutureProvider<List<RecurringArrangement>>((ref) async {
+  try {
+    final records = await pb
+        .collection('custody_recurring')
+        .getFullList(filter: 'active = true');
+    return records
+        .map((r) => RecurringArrangement.fromRecord(r.toJson()))
+        .toList();
+  } on ClientException catch (e) {
+    // Collection doesn't exist yet (migration pending) — treat as none.
+    if (e.statusCode == 404) return [];
+    rethrow;
+  }
+});
+
 // ── Resolved schedule for a single day ──────────────────────────────────────
 
 final resolvedDayProvider =
@@ -38,6 +55,7 @@ final resolvedDayProvider =
 
   final rules        = await ref.watch(baseRulesProvider.future);
   final weekdayRules = await ref.watch(weekdayRulesProvider.future);
+  final recurring    = await ref.watch(recurringArrangementsProvider.future);
 
   final overrideRecords = await pb
       .collection('manual_overrides')
@@ -52,10 +70,11 @@ final resolvedDayProvider =
       custodyRecords.map((r) => CustodyRequest.fromRecord(r.toJson())).toList();
 
   return ResolutionEngine(
-    baseRules:       rules,
-    overrides:       overrides,
-    custodyRequests: custodyRequests,
-    weekdayRules:    weekdayRules,
+    baseRules:             rules,
+    overrides:             overrides,
+    custodyRequests:       custodyRequests,
+    weekdayRules:          weekdayRules,
+    recurringArrangements: recurring,
   ).resolveDay(date);
 });
 
@@ -80,6 +99,7 @@ final weekEventsProvider =
   final monday       = DateTime(rawMonday.year, rawMonday.month, rawMonday.day);
   final rules        = await ref.watch(baseRulesProvider.future);
   final weekdayRules = await ref.watch(weekdayRulesProvider.future);
+  final recurring    = await ref.watch(recurringArrangementsProvider.future);
 
   final weekEnd = monday.add(const Duration(days: 6));
 
@@ -111,10 +131,11 @@ final weekEventsProvider =
             r.date.day   == date.day)
         .toList();
     result[_fmt(date)] = ResolutionEngine(
-      baseRules:       rules,
-      overrides:       dayOverrides,
-      custodyRequests: dayCustody,
-      weekdayRules:    weekdayRules,
+      baseRules:             rules,
+      overrides:             dayOverrides,
+      custodyRequests:       dayCustody,
+      weekdayRules:          weekdayRules,
+      recurringArrangements: recurring,
     ).resolveDay(date);
   }
   return result;
@@ -252,17 +273,97 @@ class WeekdayRulesNotifier extends AsyncNotifier<void> {
 
     ref.invalidate(weekdayRulesProvider);
     ref.invalidate(dashboardProvider);
+    ref.invalidate(weekEventsProvider);
+    ref.invalidate(resolvedDayProvider);
   }
 
   Future<void> delete(String id) async {
     await pb.collection('custody_weekday_rules').delete(id);
     ref.invalidate(weekdayRulesProvider);
     ref.invalidate(dashboardProvider);
+    ref.invalidate(weekEventsProvider);
+    ref.invalidate(resolvedDayProvider);
   }
 }
 
 final weekdayRulesNotifierProvider =
     AsyncNotifierProvider<WeekdayRulesNotifier, void>(WeekdayRulesNotifier.new);
+
+// ── Recurring arrangement mutations ───────────────────────────────────────────
+
+class RecurringArrangementsNotifier extends AsyncNotifier<void> {
+  @override
+  Future<void> build() async {}
+
+  /// Creates a standing recurring arrangement, replacing any existing one for
+  /// the same weekday + recipient so there's a single rule per pattern.
+  Future<void> upsert({
+    required int dayOfWeek,
+    required String toParent,
+    required String childName,
+    required String pickupTime,
+    String? returnTime,
+    bool returnTimeTbd = false,
+    bool toParentCollects = true,
+    bool toParentReturns = false,
+    required String startDate,
+    String? note,
+  }) async {
+    try {
+      final existing = await pb
+          .collection('custody_recurring')
+          .getFullList(filter: 'day_of_week = $dayOfWeek && to_parent = "$toParent"');
+      for (final r in existing) {
+        await pb.collection('custody_recurring').delete(r.id);
+      }
+    } catch (_) {}
+
+    await pb.collection('custody_recurring').create(body: {
+      'day_of_week':        dayOfWeek,
+      'to_parent':          toParent,
+      'child_name':         childName,
+      'pickup_time':        pickupTime,
+      'return_time':        returnTime ?? '',
+      'return_time_tbd':    returnTimeTbd,
+      'to_parent_collects': toParentCollects,
+      'to_parent_returns':  toParentReturns,
+      'start_date':         startDate,
+      'note':               note ?? '',
+      'active':             true,
+      'created_by':         pb.authStore.record?.id ?? '',
+    });
+    _invalidate();
+  }
+
+  Future<void> delete(String id) async {
+    await pb.collection('custody_recurring').delete(id);
+    _invalidate();
+  }
+
+  /// Removes every arrangement for a given weekday (used by the repeat toggle).
+  Future<void> deleteForDay(int dayOfWeek) async {
+    try {
+      final existing = await pb
+          .collection('custody_recurring')
+          .getFullList(filter: 'day_of_week = $dayOfWeek');
+      for (final r in existing) {
+        await pb.collection('custody_recurring').delete(r.id);
+      }
+    } catch (_) {}
+    _invalidate();
+  }
+
+  void _invalidate() {
+    ref.invalidate(recurringArrangementsProvider);
+    ref.invalidate(dashboardProvider);
+    ref.invalidate(weekEventsProvider);
+    ref.invalidate(resolvedDayProvider);
+  }
+}
+
+final recurringArrangementsNotifierProvider =
+    AsyncNotifierProvider<RecurringArrangementsNotifier, void>(
+        RecurringArrangementsNotifier.new);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

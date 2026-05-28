@@ -5,6 +5,7 @@ import '../core/constants.dart';
 import '../models/base_rule.dart';
 import '../models/custody_request.dart';
 import '../models/manual_override.dart';
+import '../models/recurring_arrangement.dart';
 import '../models/resolved_event.dart';
 import '../models/weekday_rule.dart';
 
@@ -19,16 +20,18 @@ import '../models/weekday_rule.dart';
 ///   - Day transfers  override [dayOwner] for that date (higher priority than weekday rules).
 ///   - Windows        affect [parentAtTime] during their pickup→return window only.
 class ResolutionEngine {
-  final List<BaseRule>       baseRules;
-  final List<ManualOverride> overrides;
-  final List<CustodyRequest> custodyRequests;
-  final List<WeekdayRule>    weekdayRules;
+  final List<BaseRule>             baseRules;
+  final List<ManualOverride>       overrides;
+  final List<CustodyRequest>       custodyRequests;
+  final List<WeekdayRule>          weekdayRules;
+  final List<RecurringArrangement> recurringArrangements;
 
   const ResolutionEngine({
     required this.baseRules,
     required this.overrides,
-    this.custodyRequests = const [],
-    this.weekdayRules    = const [],
+    this.custodyRequests       = const [],
+    this.weekdayRules          = const [],
+    this.recurringArrangements = const [],
   });
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -51,23 +54,68 @@ class ResolutionEngine {
   ///
   /// Priority: accepted day-transfer request > weekday rule > week rotation.
   Parent dayOwner(DateTime date) {
-    final transfer = custodyRequests.firstWhereOrNull(
-        (r) => r.isAccepted && r.isDayTransfer && _sameDay(r.date, date));
+    final transfer = dayTransferFor(date);
     if (transfer != null) return parentFromString(transfer.toParent);
     return _weekdayRuleParent(date.weekday) ?? weekOwner(date);
   }
 
+  /// All accepted custody for [date]: real records plus virtual occurrences
+  /// expanded from recurring arrangements.  This is the single source the rest
+  /// of the engine reasons over, so every surface sees recurring transfers.
+  List<CustodyRequest> effectiveCustodyFor(DateTime date) {
+    final real = custodyRequests
+        .where((r) => r.isAccepted && _sameDay(r.date, date))
+        .toList();
+    if (recurringArrangements.isEmpty) return real;
+    return [...real, ..._virtualRecurringFor(date, real)];
+  }
+
+  /// The effective day-transfer (real or virtual recurring) for [date], if any.
+  CustodyRequest? dayTransferFor(DateTime date) =>
+      effectiveCustodyFor(date).firstWhereOrNull((r) => r.isDayTransfer);
+
+  /// Expands recurring arrangements into virtual requests for [date].
+  /// Only fires for today/future dates (past is served by frozen real rows),
+  /// on/after the arrangement start, on weeks the OTHER parent owns the day,
+  /// and only when no real request already covers that date + child.
+  List<CustodyRequest> _virtualRecurringFor(
+      DateTime date, List<CustodyRequest> realForDate) {
+    final now       = DateTime.now();
+    final todayDate = DateTime(now.year, now.month, now.day);
+    final d         = DateTime(date.year, date.month, date.day);
+    if (d.isBefore(todayDate)) return const [];
+
+    final out = <CustodyRequest>[];
+    for (final a in recurringArrangements) {
+      if (!a.active) continue;
+      if (a.dayOfWeek != date.weekday) continue;
+      final start = DateTime(a.startDate.year, a.startDate.month, a.startDate.day);
+      if (d.isBefore(start)) continue;
+      // Conditional: skip weeks where the recipient already owns the day.
+      if (baseOwner(date) == parentFromString(a.toParent)) continue;
+      // Suppress when a one-off request already covers this date + child.
+      final covered = realForDate.any((r) =>
+          r.childName == a.childName ||
+          r.childName == 'All' ||
+          a.childName == 'All');
+      if (covered) continue;
+      out.add(a.toVirtualRequest(date, fromParent: baseOwner(date).displayName));
+    }
+    return out;
+  }
+
   /// Accepted window requests (those with a return time) for [date].
   /// Used by [parentAtTime] and by the month-grid split painter.
-  List<CustodyRequest> custodyWindows(DateTime date) => custodyRequests
-      .where((r) => r.isAccepted && !r.isDayTransfer && _sameDay(r.date, date))
-      .toList();
+  List<CustodyRequest> custodyWindows(DateTime date) =>
+      effectiveCustodyFor(date).where((r) => !r.isDayTransfer).toList();
 
   /// True when [date] has at least one accepted window request AND every
   /// base-rule event scheduled for that weekday falls entirely within a window.
   ///
-  /// Used by the calendar strip/grid: when this returns true, the cell can
-  /// show a solid window-recipient colour instead of a diagonal split.
+  /// Used by the calendar strip/grid.  When this returns true AND the window
+  /// has no definite return time, the cell shows a solid window-recipient
+  /// colour.  When the window has a known return time the base owner gets the
+  /// kids back, so the cell shows a diagonal split regardless.
   bool windowCoversAllEvents(DateTime date) {
     final windows = custodyWindows(date);
     if (windows.isEmpty) return false;
@@ -109,8 +157,7 @@ class ResolutionEngine {
     }
     // Day transfers only take effect from their pickup time onwards — events
     // before the handover still belong to the original day owner.
-    final transfer = custodyRequests.firstWhereOrNull(
-        (r) => r.isAccepted && r.isDayTransfer && _sameDay(r.date, date));
+    final transfer = dayTransferFor(date);
     if (transfer != null) {
       final p = _parseTime(transfer.pickupTime);
       if (timeMin >= p.hour * 60 + p.minute) return parentFromString(transfer.toParent);
@@ -141,27 +188,27 @@ class ResolutionEngine {
             ))
         .toList();
 
-    // Accepted custody requests — day transfers and windows both appear as events.
-    final custodyEvents = custodyRequests
-        .where((r) => r.isAccepted && _sameDay(r.date, date))
-        .map((r) {
-          final label = r.isDayTransfer
-              ? '${r.toParent} has ${r.childName}'
-              : '${r.toParent} has ${r.childName} · ${r.timeWindowLabel}';
-          return ResolvedEvent(
-            date:                  date,
-            time:                  _parseTime(r.pickupTime),
-            activity:              label,
-            location:              '',
-            childName:             r.childName,
-            assignedParent:        parentFromString(r.toParent),
-            overrideReason:        r.note,
-            isAdhoc:               true,
-            custodyRequestId:      r.id,
-            custodyTransportNote:  _transportNote(r),
-          );
-        })
-        .toList();
+    // Accepted custody — real records plus virtual recurring occurrences —
+    // appear as banner events (day transfers and windows alike).
+    final custodyEvents = effectiveCustodyFor(date).map((r) {
+      final label = r.isDayTransfer
+          ? '${r.toParent} has ${r.childName}'
+          : '${r.toParent} has ${r.childName} · ${r.timeWindowLabel}';
+      final recurringId = RecurringArrangement.recurringIdFrom(r.id);
+      return ResolvedEvent(
+        date:                  date,
+        time:                  _parseTime(r.pickupTime),
+        activity:              label,
+        location:              '',
+        childName:             r.childName,
+        assignedParent:        parentFromString(r.toParent),
+        overrideReason:        r.note,
+        isAdhoc:               true,
+        custodyRequestId:      recurringId == null ? r.id : null,
+        recurringId:           recurringId,
+        custodyTransportNote:  _transportNote(r),
+      );
+    }).toList();
 
     final all = [...events, ...adhoc, ...custodyEvents];
     all.sort((a, b) {
@@ -254,8 +301,7 @@ class ResolutionEngine {
     }
 
     // Day transfer only takes effect from its pickup time onwards.
-    final transfer = custodyRequests.firstWhereOrNull(
-        (r) => r.isAccepted && r.isDayTransfer && _sameDay(r.date, date));
+    final transfer = dayTransferFor(date);
     if (transfer != null) {
       final p = _parseTime(transfer.pickupTime);
       if (timeMin >= p.hour * 60 + p.minute) {

@@ -65,6 +65,12 @@ class ResolvedEvent {
   /// "Bennet collects · Jana picks up". Null for all other event types.
   final String? custodyTransportNote;
 
+  /// PocketBase id of the custody_recurring arrangement that generated this
+  /// (virtual) occurrence. Non-null only for live-expanded recurring banners;
+  /// once an occurrence is frozen into a real request it carries
+  /// [custodyRequestId] instead.
+  final String? recurringId;
+
   const ResolvedEvent({
     required this.date,
     required this.time,
@@ -80,6 +86,7 @@ class ResolvedEvent {
     this.custodyNote,
     this.custodyRequestId,
     this.custodyTransportNote,
+    this.recurringId,
   });
 
   /// Serialised form written to SharedPreferences for the Android widget.
