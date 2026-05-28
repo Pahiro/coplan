@@ -198,6 +198,7 @@ class _RecurringRulesSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final colors = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
     final rulesAsync = ref.watch(weekdayRulesProvider);
     return rulesAsync.when(
       loading: () => const LinearProgressIndicator(),
