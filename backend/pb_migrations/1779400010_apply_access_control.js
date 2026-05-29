@@ -43,7 +43,7 @@ migrate((db) => {
     set("household_members", {
         list: isMember, view: isMember,
         create: isMember + " || household.owner = @request.auth.id",
-        update: "household.owner = @request.auth.id",
+        update: "household.owner = @request.auth.id || user = @request.auth.id",
         delete: "household.owner = @request.auth.id || user = @request.auth.id",
     });
 

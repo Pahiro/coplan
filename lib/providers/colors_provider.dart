@@ -83,6 +83,8 @@ class ColorsNotifier extends AsyncNotifier<AppColors> {
       }
     }
 
+    // Invalidate household so member data is re-fetched with new colour
+    ref.invalidate(householdProvider);
     ref.invalidateSelf();
   }
 
@@ -90,6 +92,8 @@ class ColorsNotifier extends AsyncNotifier<AppColors> {
   Future<void> updateChildColor(String childId, Color color) async {
     final hex = '#${color.value.toRadixString(16).substring(2).toUpperCase()}';
     await pb.collection('children').update(childId, body: {'color': hex});
+    // Invalidate household so child data is re-fetched with new colour
+    ref.invalidate(householdProvider);
     ref.invalidateSelf();
   }
 

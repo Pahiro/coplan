@@ -53,11 +53,36 @@ get_version_code() {
     get_version | sed 's/.*+//'
 }
 
-# ── 1. Backend: backup, deploy migrations + hooks ────────────────────────────
+# Bump the build number (versionCode) in pubspec.yaml.
+# e.g. 1.0.5+6 → 1.0.5+7.  Pass --bump-minor to also bump the minor:
+# 1.0.5+6 → 1.0.6+7.
+bump_version() {
+    local old_version
+    old_version=$(get_version)
+    local name="${old_version%+*}"     # e.g. 1.0.5
+    local code="${old_version##*+}"    # e.g. 6
+    local new_code=$((code + 1))
+
+    # Optionally bump the patch segment of the version name
+    local major minor patch
+    IFS='.' read -r major minor patch <<< "$name"
+    local new_name="$major.$minor.$((patch + 1))"
+
+    local new_version="$new_name+$new_code"
+    sed -i "s/^version: .*/version: $new_version/" "$SCRIPT_DIR/pubspec.yaml"
+    info "Version bumped: $old_version → $new_version"
+}
+
+# ── 1. Bump version ──────────────────────────────────────────────────────────
+
+if [ "$SKIP_BUILD" = false ]; then
+    bump_version
+fi
+
+# ── 2. Backend: backup, deploy migrations + hooks ────────────────────────────
 
 if [ "$SKIP_BACKEND" = false ]; then
     info "Deploying backend (migrations + hooks)..."
-
     info "Backing up PocketBase data..."
     ssh "$SERVER" "systemctl stop coplan && tar czf /root/coplan-backups/pb_data-\$(date +%Y%m%d-%H%M%S).tar.gz -C $PB_DIR pb_data"
     ok "Backup created"
@@ -84,7 +109,7 @@ else
     info "Skipping backend deployment"
 fi
 
-# ── 2. Build APK ─────────────────────────────────────────────────────────────
+# ── 3. Build APK ─────────────────────────────────────────────────────────────
 
 if [ "$SKIP_BUILD" = false ] && [ "$SKIP_APK" = false ]; then
     info "Building release APK..."
@@ -92,7 +117,7 @@ if [ "$SKIP_BUILD" = false ] && [ "$SKIP_APK" = false ]; then
     ok "APK built: build/app/outputs/flutter-apk/app-release.apk"
 fi
 
-# ── 3. Deploy APK + update app_settings ──────────────────────────────────────
+# ── 4. Deploy APK + update app_settings ──────────────────────────────────────
 
 if [ "$SKIP_APK" = false ]; then
     VERSION_NAME=$(get_version_name)
@@ -124,7 +149,7 @@ else
     info "Skipping APK deployment"
 fi
 
-# ── 4. Build + deploy web ─────────────────────────────────────────────────────
+# ── 5. Build + deploy web ─────────────────────────────────────────────────────
 
 if [ "$SKIP_WEB" = false ]; then
     if [ "$SKIP_BUILD" = false ]; then
@@ -143,6 +168,8 @@ fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 
+VERSION_NAME=$(get_version_name)
+VERSION_CODE=$(get_version_code)
 echo ""
 ok "Deployment complete! Version: $VERSION_NAME+$VERSION_CODE"
 echo "  APK: $PB_URL/coplan-latest.apk?v=$VERSION_CODE"

@@ -17,6 +17,9 @@ migrate((db) => {
         required: false,
     });
     coll.schema = schema;
+
+    // Allow members to update their own record (for colour changes)
+    coll.updateRule = "household.owner = @request.auth.id || user = @request.auth.id";
     dao.saveCollection(coll);
 
     // Migrate existing colours from user records
