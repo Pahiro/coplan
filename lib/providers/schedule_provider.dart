@@ -14,14 +14,8 @@ import 'household_provider.dart';
 // ── Static data — fetched once, rarely changes ───────────────────────────────
 
 final baseRulesProvider = FutureProvider<List<BaseRule>>((ref) async {
-  try {
-    final records = await pb.collection('rules_base').getFullList();
-    print('[ScheduleProvider] rules_base records: ${records.length}');
-    return records.map((r) => BaseRule.fromRecord(r.toJson())).toList();
-  } catch (e) {
-    print('[ScheduleProvider] rules_base ERROR: $e');
-    rethrow;
-  }
+  final records = await pb.collection('rules_base').getFullList();
+  return records.map((r) => BaseRule.fromRecord(r.toJson())).toList();
 });
 
 final weekdayRulesProvider = FutureProvider<List<WeekdayRule>>((ref) async {

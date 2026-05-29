@@ -23,23 +23,13 @@ class ColorsNotifier extends AsyncNotifier<AppColors> {
     final childColors  = <String, Color>{};
 
     if (household != null) {
-      // ── Parent colours from user preferred_color ──────────────────────────
-      // Assign fallback colours deterministically by rotation role:
-      // even parent → blue (index 0), odd parent → pink (index 1), others → teal, amber…
+      // ── Parent colours from household_members.preferred_color ─────────────
+      // Fallback: even parent → blue, odd parent → pink (deterministic).
       final evenId = household.rotationParentEvenId;
       final oddId  = household.rotationParentOddId;
 
       for (final m in household.members) {
-        Color? parsed;
-        try {
-          final user = await pb.collection('users').getOne(m.userId);
-          final hex = user.data['preferred_color'] as String? ?? '';
-          print('[ColorsProvider] ${m.displayName} preferred_color raw: "$hex"');
-          parsed = _parseHex(hex);
-          print('[ColorsProvider] ${m.displayName} parsed: $parsed');
-        } catch (e) {
-          print('[ColorsProvider] ${m.displayName} fetch error: $e');
-        }
+        final parsed = _parseHex(m.preferredColor ?? '');
 
         if (parsed != null) {
           parentColors[m.displayName] = parsed;
@@ -48,7 +38,6 @@ class ColorsNotifier extends AsyncNotifier<AppColors> {
         } else if (m.userId == oddId) {
           parentColors[m.displayName] = _defaultParentColors[1]; // pink
         } else {
-          // Helpers / additional members get subsequent colours
           final usedCount = parentColors.length;
           parentColors[m.displayName] =
               _defaultParentColors[usedCount % _defaultParentColors.length];
@@ -73,12 +62,27 @@ class ColorsNotifier extends AsyncNotifier<AppColors> {
     );
   }
 
-  /// Persist the current user's preferred colour to PocketBase.
+  /// Persist the current user's preferred colour to both the user record and
+  /// their household_members record (so other members can see it).
   Future<void> updateMyColor(Color color) async {
     final userId = pb.authStore.record?.id;
     if (userId == null) return;
     final hex = '#${color.value.toRadixString(16).substring(2).toUpperCase()}';
+
+    // Update user record (for personal reference)
     await pb.collection('users').update(userId, body: {'preferred_color': hex});
+
+    // Update household_members record (visible to other members)
+    final household = ref.read(householdProvider).valueOrNull;
+    if (household != null) {
+      final member = household.memberByUserId(userId);
+      if (member != null) {
+        await pb.collection('household_members').update(member.id, body: {
+          'preferred_color': hex,
+        });
+      }
+    }
+
     ref.invalidateSelf();
   }
 

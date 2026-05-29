@@ -10,6 +10,7 @@ class HouseholdMember {
   final String role;         // "parent" | "helper"
   final String displayName;
   final String status;       // "active" | "invited"
+  final String? preferredColor; // hex e.g. "#1565C0"
 
   const HouseholdMember({
     required this.id,
@@ -18,18 +19,20 @@ class HouseholdMember {
     required this.role,
     required this.displayName,
     this.status = 'active',
+    this.preferredColor,
   });
 
   bool get isParent => role == 'parent';
   bool get isHelper => role == 'helper';
 
   factory HouseholdMember.fromRecord(Map<String, dynamic> j) => HouseholdMember(
-    id:          j['id'] as String,
-    householdId: j['household'] as String? ?? '',
-    userId:      j['user'] as String? ?? '',
-    role:        j['role'] as String? ?? 'parent',
-    displayName: j['display_name'] as String? ?? '',
-    status:      j['status'] as String? ?? 'active',
+    id:             j['id'] as String,
+    householdId:    j['household'] as String? ?? '',
+    userId:         j['user'] as String? ?? '',
+    role:           j['role'] as String? ?? 'parent',
+    displayName:    j['display_name'] as String? ?? '',
+    status:         j['status'] as String? ?? 'active',
+    preferredColor: j['preferred_color'] as String?,
   );
 }
 
