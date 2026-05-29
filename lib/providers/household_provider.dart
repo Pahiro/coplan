@@ -206,45 +206,21 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
   }
 
   /// Accept an invite code — joins the household.
+  ///
+  /// Redemption runs server-side (`/api/coplan/accept-invite`, see pb_hooks):
+  /// a joiner is not yet a member, so under the household-scoped access rules
+  /// they can't read the invite or create their own membership. The route
+  /// validates the code, adds the membership, marks the invite used, and sets
+  /// the user's active household — all with elevated privileges.
   Future<void> acceptInvite(String code) async {
     final auth = ref.read(authProvider).valueOrNull;
     if (auth == null) throw Exception('Not logged in');
-    final userId = auth.userId ?? '';
-    final displayName = auth.userName ?? 'Member';
 
-    // Find the invite
-    final invites = await pb.collection('household_invites').getFullList(
-      filter: 'invite_code = "$code" && used_by = ""',
+    await pb.send(
+      '/api/coplan/accept-invite',
+      method: 'POST',
+      body: {'code': code.trim().toUpperCase()},
     );
-    if (invites.isEmpty) throw Exception('Invalid or expired invite code');
-
-    final invite = invites.first;
-    final expiresAt = DateTime.parse(invite.data['expires_at'] as String);
-    if (DateTime.now().isAfter(expiresAt)) {
-      throw Exception('Invite code has expired');
-    }
-
-    final householdId = invite.data['household'] as String;
-    final role = invite.data['role'] as String? ?? 'parent';
-
-    // Add as member
-    await pb.collection('household_members').create(body: {
-      'household':    householdId,
-      'user':         userId,
-      'role':         role,
-      'display_name': displayName,
-      'status':       'active',
-    });
-
-    // Mark invite as used
-    await pb.collection('household_invites').update(invite.id, body: {
-      'used_by': userId,
-    });
-
-    // Set as active household
-    await pb.collection('users').update(userId, body: {
-      'active_household': householdId,
-    });
 
     ref.invalidateSelf();
   }

@@ -194,3 +194,77 @@ cronAdd("freezeRecurring", "5 0 * * *", () => {
         console.log("freezeRecurring error:", err);
     }
 });
+
+// ── Invite redemption ────────────────────────────────────────────────────────
+//
+// A joiner is not yet a household member, so under the household-scoped access
+// rules they can't list/read the invite or create their own membership.
+// This route runs with elevated (DAO) privileges: it validates the code,
+// adds the membership, marks the invite used, and sets the user's active
+// household. Keeps invites un-enumerable and closes the self-join hole.
+routerAdd("POST", "/api/coplan/accept-invite", (c) => {
+    const info = $apis.requestInfo(c);
+    const authRecord = info.authRecord;
+    if (!authRecord) throw new ForbiddenError("Authentication required.");
+
+    const data = info.data || {};
+    const code = (data.code || "").toString().trim().toUpperCase();
+    if (!code) throw new BadRequestError("Missing invite code.");
+
+    const dao = $app.dao();
+
+    let invite;
+    try {
+        invite = dao.findFirstRecordByFilter(
+            "household_invites",
+            "invite_code = {:code} && used_by = ''",
+            { code: code }
+        );
+    } catch (_) {
+        throw new BadRequestError("Invalid or already-used invite code.");
+    }
+
+    const expiresStr = invite.get("expires_at");
+    if (expiresStr) {
+        const exp = new Date(expiresStr);
+        if (!isNaN(exp.getTime()) && Date.now() > exp.getTime()) {
+            throw new BadRequestError("This invite code has expired.");
+        }
+    }
+
+    const householdId = invite.get("household");
+    const role        = invite.get("role") || "parent";
+    const userId      = authRecord.id;
+    const displayName = authRecord.get("name") || "Member";
+
+    // Skip if already a member (idempotent).
+    let alreadyMember = false;
+    try {
+        dao.findFirstRecordByFilter(
+            "household_members",
+            "household = {:h} && user = {:u}",
+            { h: householdId, u: userId }
+        );
+        alreadyMember = true;
+    } catch (_) {}
+
+    if (!alreadyMember) {
+        const coll = dao.findCollectionByNameOrId("household_members");
+        const m = new Record(coll);
+        m.set("household",    householdId);
+        m.set("user",         userId);
+        m.set("role",         role);
+        m.set("display_name", displayName);
+        m.set("status",       "active");
+        dao.saveRecord(m);
+    }
+
+    invite.set("used_by", userId);
+    dao.saveRecord(invite);
+
+    const user = dao.findRecordById("users", userId);
+    user.set("active_household", householdId);
+    dao.saveRecord(user);
+
+    return c.json(200, { success: true, household: householdId });
+});
