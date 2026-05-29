@@ -42,9 +42,9 @@ info()  { echo -e "\033[1;34m[INFO]\033[0m $1"; }
 ok()    { echo -e "\033[1;32m[OK]\033[0m $1"; }
 err()   { echo -e "\033[1;31m[ERROR]\033[0m $1"; exit 1; }
 
-# Extract version from pubspec.yaml
+# Extract version from pubspec.yaml (tr -d strips any Windows \r)
 get_version() {
-    grep '^version:' "$SCRIPT_DIR/pubspec.yaml" | sed 's/version: //'
+    grep '^version:' "$SCRIPT_DIR/pubspec.yaml" | sed 's/version: //' | tr -d '\r\n '
 }
 get_version_name() {
     get_version | sed 's/+.*//'
@@ -63,13 +63,14 @@ bump_version() {
     local code="${old_version##*+}"    # e.g. 6
     local new_code=$((code + 1))
 
-    # Optionally bump the patch segment of the version name
     local major minor patch
     IFS='.' read -r major minor patch <<< "$name"
     local new_name="$major.$minor.$((patch + 1))"
 
     local new_version="$new_name+$new_code"
     sed -i "s/^version: .*/version: $new_version/" "$SCRIPT_DIR/pubspec.yaml"
+    # Also strip any trailing \r that sed -i may have left
+    sed -i 's/\r$//' "$SCRIPT_DIR/pubspec.yaml"
     info "Version bumped: $old_version → $new_version"
 }
 
