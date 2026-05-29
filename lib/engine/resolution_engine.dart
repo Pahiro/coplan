@@ -231,7 +231,6 @@ class ResolutionEngine {
               location:       o.adhocLocation ?? '',
               childName:      o.childName,
               assignedParent: o.assignedParent,
-              overrideReason: o.reason.isEmpty ? null : o.reason,
               note:           o.note,
               isAdhoc:        true,
               isShared:       o.isShared,
