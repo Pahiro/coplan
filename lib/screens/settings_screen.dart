@@ -29,7 +29,10 @@ class SettingsScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Error: $e')),
         data: (colors) => ListView(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.fromLTRB(
+            16, 16, 16,
+            16 + MediaQuery.of(context).padding.bottom,
+          ),
           children: [
             // ── Theme ──────────────────────────────────────────────────────
             _SectionHeader('Appearance'),
