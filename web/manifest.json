@@ -1,11 +1,11 @@
 {
-    "name": "coplan",
-    "short_name": "coplan",
+    "name": "CoPlan",
+    "short_name": "CoPlan",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "CoPlan – co-parenting scheduler",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

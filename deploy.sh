@@ -156,7 +156,11 @@ if [ "$SKIP_WEB" = false ]; then
     if [ "$SKIP_BUILD" = false ]; then
         info "Building web..."
         flutter build web --dart-define=PB_URL="$PB_URL"
-        ok "Web built"
+        # Cache-bust: stamp version on flutter_bootstrap.js reference
+        CACHE_VER="$(date +%s)"
+        sed -i "s|flutter_bootstrap.js|flutter_bootstrap.js?v=$CACHE_VER|g" \
+            "$SCRIPT_DIR/build/web/index.html"
+        ok "Web built (cache-bust: $CACHE_VER)"
     fi
 
     info "Deploying web to pb_public (alongside APK)..."
