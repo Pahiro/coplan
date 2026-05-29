@@ -147,20 +147,14 @@ class _CreateHouseholdPanelState
       final auth = ref.read(authProvider).valueOrNull;
       final displayName = auth?.userName ?? 'Parent';
 
-      // Create household
-      final householdId = await ref.read(householdProvider.notifier)
-          .createHousehold(
+      // Create household + children atomically (passing child names through, so
+      // they're created with the new household id rather than via addChild,
+      // which would no-op while the provider state is still null).
+      await ref.read(householdProvider.notifier).createHousehold(
             name: _nameCtrl.text.trim(),
             displayName: displayName,
+            childNames: _childCtrls.map((c) => c.text).toList(),
           );
-
-      // Add children
-      for (final ctrl in _childCtrls) {
-        final name = ctrl.text.trim();
-        if (name.isNotEmpty) {
-          await ref.read(householdProvider.notifier).addChild(name: name);
-        }
-      }
 
       // Refresh auth state so the app routes to the main shell
       if (mounted) {

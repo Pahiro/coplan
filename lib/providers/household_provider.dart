@@ -65,10 +65,16 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
     );
   }
 
-  /// Create a new household and set it as the user's active household.
+  /// Create a new household, add the creator as the owning parent, optionally
+  /// add children, and set it as the user's active household.
+  ///
+  /// Children are created here (not via a separate [addChild] loop) using the
+  /// new household id directly — right after creation the provider's state is
+  /// still the previous value (null), so [addChild] would no-op.
   Future<String> createHousehold({
     required String name,
     required String displayName,
+    List<String> childNames = const [],
   }) async {
     final auth = ref.read(authProvider).valueOrNull;
     final userId = auth?.userId ?? '';
@@ -80,7 +86,8 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
       'owner': userId,
     });
 
-    // Add current user as parent member
+    // Add current user as parent member (must precede child creation: the
+    // children create rule requires the caller to be a member of the household).
     await pb.collection('household_members').create(body: {
       'household':    hRecord.id,
       'user':         userId,
@@ -88,6 +95,17 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
       'display_name': displayName,
       'status':       'active',
     });
+
+    // Add children
+    for (final raw in childNames) {
+      final childName = raw.trim();
+      if (childName.isEmpty) continue;
+      await pb.collection('children').create(body: {
+        'household': hRecord.id,
+        'name':      childName,
+        'color':     '',
+      });
+    }
 
     // Set as active household
     await pb.collection('users').update(userId, body: {
