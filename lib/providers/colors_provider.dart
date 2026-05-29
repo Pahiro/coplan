@@ -24,16 +24,35 @@ class ColorsNotifier extends AsyncNotifier<AppColors> {
 
     if (household != null) {
       // ── Parent colours from user preferred_color ──────────────────────────
-      for (var i = 0; i < household.members.length; i++) {
-        final m = household.members[i];
+      // Assign fallback colours deterministically by rotation role:
+      // even parent → blue (index 0), odd parent → pink (index 1), others → teal, amber…
+      final evenId = household.rotationParentEvenId;
+      final oddId  = household.rotationParentOddId;
+
+      for (final m in household.members) {
         Color? parsed;
         try {
           final user = await pb.collection('users').getOne(m.userId);
           final hex = user.data['preferred_color'] as String? ?? '';
+          print('[ColorsProvider] ${m.displayName} preferred_color raw: "$hex"');
           parsed = _parseHex(hex);
-        } catch (_) {}
-        parentColors[m.displayName] =
-            parsed ?? _defaultParentColors[i % _defaultParentColors.length];
+          print('[ColorsProvider] ${m.displayName} parsed: $parsed');
+        } catch (e) {
+          print('[ColorsProvider] ${m.displayName} fetch error: $e');
+        }
+
+        if (parsed != null) {
+          parentColors[m.displayName] = parsed;
+        } else if (m.userId == evenId) {
+          parentColors[m.displayName] = _defaultParentColors[0]; // blue
+        } else if (m.userId == oddId) {
+          parentColors[m.displayName] = _defaultParentColors[1]; // pink
+        } else {
+          // Helpers / additional members get subsequent colours
+          final usedCount = parentColors.length;
+          parentColors[m.displayName] =
+              _defaultParentColors[usedCount % _defaultParentColors.length];
+        }
       }
 
       // ── Child colours from children collection ────────────────────────────

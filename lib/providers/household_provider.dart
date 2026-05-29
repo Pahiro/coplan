@@ -19,50 +19,74 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
   @override
   Future<HouseholdConfig?> build() async {
     final auth = ref.watch(authProvider).valueOrNull;
-    if (auth == null || !auth.isLoggedIn) return null;
+    if (auth == null || !auth.isLoggedIn) {
+      print('[HouseholdProvider] Not logged in');
+      return null;
+    }
 
     // Get active household id from the user record
     final userId = auth.userId ?? '';
-    if (userId.isEmpty) return null;
+    if (userId.isEmpty) {
+      print('[HouseholdProvider] Empty userId');
+      return null;
+    }
 
     String? householdId;
     try {
       final user = await pb.collection('users').getOne(userId);
       householdId = user.data['active_household'] as String?;
-    } catch (_) {
+      print('[HouseholdProvider] userId=$userId, active_household=$householdId');
+    } catch (e) {
+      print('[HouseholdProvider] Failed to fetch user: $e');
       return null;
     }
 
-    if (householdId == null || householdId.isEmpty) return null;
+    if (householdId == null || householdId.isEmpty) {
+      print('[HouseholdProvider] No active household set');
+      return null;
+    }
 
     return _fetchHousehold(householdId);
   }
 
   Future<HouseholdConfig?> _fetchHousehold(String householdId) async {
-    // Fetch household record
-    final hRecord = await pb.collection('households').getOne(householdId);
+    try {
+      // Fetch household record
+      final hRecord = await pb.collection('households').getOne(householdId);
+      print('[HouseholdProvider] Fetched household: ${hRecord.id} name=${hRecord.data['name']}');
 
-    // Fetch members
-    final memberRecords = await pb.collection('household_members').getFullList(
-      filter: 'household = "$householdId"',
-    );
-    final members = memberRecords
-        .map((r) => HouseholdMember.fromRecord(r.toJson()))
-        .toList();
+      // Fetch members
+      final memberRecords = await pb.collection('household_members').getFullList(
+        filter: 'household = "$householdId"',
+      );
+      print('[HouseholdProvider] Members found: ${memberRecords.length}');
+      for (final r in memberRecords) {
+        print('[HouseholdProvider]   member: ${r.data['display_name']} (user=${r.data['user']}, role=${r.data['role']})');
+      }
+      final members = memberRecords
+          .map((r) => HouseholdMember.fromRecord(r.toJson()))
+          .toList();
 
-    // Fetch children
-    final childRecords = await pb.collection('children').getFullList(
-      filter: 'household = "$householdId"',
-    );
-    final children = childRecords
-        .map((r) => HouseholdChild.fromRecord(r.toJson()))
-        .toList();
+      // Fetch children
+      final childRecords = await pb.collection('children').getFullList(
+        filter: 'household = "$householdId"',
+      );
+      print('[HouseholdProvider] Children found: ${childRecords.length}');
+      final children = childRecords
+          .map((r) => HouseholdChild.fromRecord(r.toJson()))
+          .toList();
 
-    return HouseholdConfig.fromRecord(
-      hRecord.toJson(),
-      members: members,
-      children: children,
-    );
+      final config = HouseholdConfig.fromRecord(
+        hRecord.toJson(),
+        members: members,
+        children: children,
+      );
+      print('[HouseholdProvider] rotationEvenName=${config.rotationParentEvenName}, oddName=${config.rotationParentOddName}');
+      return config;
+    } catch (e) {
+      print('[HouseholdProvider] _fetchHousehold ERROR: $e');
+      rethrow;
+    }
   }
 
   /// Create a new household, add the creator as the owning parent, optionally
