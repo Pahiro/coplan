@@ -239,6 +239,8 @@ class CustodyRequestsNotifier
     required String activity,
     required String location,
     required String assignedParent,
+    String? endTime,
+    String? note,
   }) async {
     final auth = ref.read(authProvider).valueOrNull;
     final myId = auth?.userId ?? '';
@@ -255,6 +257,8 @@ class CustodyRequestsNotifier
       'is_shared':       true,
       'activity':        activity,
       'location':        location,
+      if (endTime != null && endTime.isNotEmpty) 'end_time': endTime,
+      if (note != null && note.isNotEmpty) 'note': note,
       if (hid != null) 'household': hid,
     };
     try {

@@ -5,7 +5,9 @@ class ManualOverride {
   final String? originalParent;  // null for ad-hoc events
   final String assignedParent;
   final String? overrideTime;
+  final String? endTime;
   final String reason;
+  final String? note;
   final String createdBy;
 
   // Ad-hoc event fields (only used when isAdhoc == true)
@@ -24,7 +26,9 @@ class ManualOverride {
     this.originalParent,
     required this.assignedParent,
     this.overrideTime,
+    this.endTime,
     required this.reason,
+    this.note,
     required this.createdBy,
     this.isAdhoc = false,
     this.adhocActivity,
@@ -54,7 +58,9 @@ class ManualOverride {
       originalParent: j['original_parent'] as String?,
       assignedParent: j['assigned_parent'] as String,
       overrideTime:   j['override_time'] as String?,
+      endTime:        j['end_time'] as String?,
       reason:         reason,
+      note:           j['note'] as String?,
       createdBy:      j['created_by'] as String? ?? '',
       isAdhoc:        isAdhocFlag,
       adhocActivity:  effectiveActivity.isNotEmpty ? effectiveActivity : null,

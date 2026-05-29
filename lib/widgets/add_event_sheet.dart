@@ -33,12 +33,14 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
   late DateTime  _date;
   late int       _dayOfWeek;
   TimeOfDay      _time     = const TimeOfDay(hour: 14, minute: 30);
+  TimeOfDay?     _endTime;
   String         _child    = 'All';
   bool           _isShared = false; // only used for standing events
   bool           _saving   = false;
 
   final _activityCtrl = TextEditingController();
   final _locationCtrl = TextEditingController();
+  final _noteCtrl     = TextEditingController();
 
   @override
   void initState() {
@@ -51,6 +53,7 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
   void dispose() {
     _activityCtrl.dispose();
     _locationCtrl.dispose();
+    _noteCtrl.dispose();
     super.dispose();
   }
 
@@ -63,6 +66,14 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
     final picked =
         await showTimePicker(context: context, initialTime: _time);
     if (picked != null) setState(() => _time = picked);
+  }
+
+  Future<void> _pickEndTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _endTime ?? _time.replacing(hour: (_time.hour + 1) % 24),
+    );
+    if (picked != null) setState(() => _endTime = picked);
   }
 
   Future<void> _pickDate() async {
@@ -109,6 +120,8 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
               activity:       _activityCtrl.text.trim(),
               location:       _locationCtrl.text.trim(),
               assignedParent: owner,
+              endTime:        _endTime != null ? _fmtTime(_endTime!) : null,
+              note:           _noteCtrl.text.trim(),
             );
       }
       if (mounted) Navigator.pop(context);
@@ -208,6 +221,32 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
             ),
             const SizedBox(height: 12),
 
+            // End time — one-off events only
+            if (_mode == _AddMode.oneoff) ...[
+              _TimeField(
+                label: _endTime != null ? 'Ends: ${_fmtTime(_endTime!)}' : 'End time (optional)',
+                onTap: _pickEndTime,
+                icon: Icons.timer_off_outlined,
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            // Notes — one-off events only
+            if (_mode == _AddMode.oneoff) ...[
+              TextField(
+                controller: _noteCtrl,
+                textCapitalization: TextCapitalization.sentences,
+                maxLines: 3,
+                minLines: 1,
+                decoration: const InputDecoration(
+                  labelText: 'Notes (optional)',
+                  prefixIcon: Icon(Icons.notes_outlined),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
             // Child
             DropdownButtonFormField<String>(
               value: _child,
@@ -287,18 +326,19 @@ class _DateField extends StatelessWidget {
 class _TimeField extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
-  const _TimeField({required this.label, required this.onTap});
+  final IconData icon;
+  const _TimeField({required this.label, required this.onTap, this.icon = Icons.schedule_outlined});
 
   @override
   Widget build(BuildContext context) => InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(4),
         child: InputDecorator(
-          decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.schedule_outlined),
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            prefixIcon: Icon(icon),
+            border: const OutlineInputBorder(),
             contentPadding:
-                EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
           ),
           child: Text(label, style: Theme.of(context).textTheme.bodyLarge),
         ),
