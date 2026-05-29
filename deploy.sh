@@ -158,10 +158,10 @@ if [ "$SKIP_WEB" = false ]; then
         ok "Web built"
     fi
 
-    info "Deploying web to pb_public..."
-    # Sync web build to server's static files directory
-    rsync -az --delete "$SCRIPT_DIR/build/web/" "$SERVER:$PB_DIR/pb_public/web/"
-    ok "Web deployed to $PB_URL/web/"
+    info "Deploying web to pb_public (alongside APK)..."
+    # Sync web build into pb_public root (excludes the APK so rsync doesn't delete it)
+    rsync -az --exclude='coplan-latest.apk' "$SCRIPT_DIR/build/web/" "$SERVER:$PB_DIR/pb_public/"
+    ok "Web deployed to $PB_URL/"
 else
     info "Skipping web deployment"
 fi
@@ -173,4 +173,4 @@ VERSION_CODE=$(get_version_code)
 echo ""
 ok "Deployment complete! Version: $VERSION_NAME+$VERSION_CODE"
 echo "  APK: $PB_URL/coplan-latest.apk?v=$VERSION_CODE"
-echo "  Web: $PB_URL/web/"
+echo "  Web: $PB_URL/"
