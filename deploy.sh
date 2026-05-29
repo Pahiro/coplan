@@ -76,7 +76,7 @@ bump_version() {
 
 # ── 1. Bump version ──────────────────────────────────────────────────────────
 
-if [ "$SKIP_BUILD" = false ]; then
+if [ "$SKIP_BUILD" = false ] && [ "$SKIP_APK" = false ]; then
     bump_version
 fi
 
