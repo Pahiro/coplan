@@ -59,6 +59,15 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       password: _passCtrl.text,
       name:     _nameCtrl.text.trim(),
     );
+
+    // On success the app's home rebuilds to the household setup wizard, but this
+    // RegisterScreen is pushed on top of the login screen — pop it so the new
+    // home is revealed instead of leaving the user staring at the form.
+    if (!mounted) return;
+    final auth = ref.read(authProvider);
+    if (!auth.hasError && (auth.valueOrNull?.isLoggedIn ?? false)) {
+      Navigator.of(context).pop();
+    }
   }
 
   @override

@@ -76,6 +76,13 @@ Access rules restrict every collection to **members of the record's household**
 - Name new migrations with a **timestamp above the server's latest applied**
   one (we've been using the `17794000xx` range).
 - Always include a working **down** migration.
+- ⚠️ **Committing a migration to git does NOT deploy it.** You must `scp` it to
+  the server and restart, then confirm it's in `_migrations` AND that the
+  intended rules/fields actually changed (`sqlite3 … _collections`). A migration
+  that's committed but never deployed silently leaves the server on the old
+  state — this caused a real cross-household data leak (the access-control rules
+  were committed but never ran on the box). For access-control changes,
+  always verify with a throwaway account that it can't read another household.
 
 ## Deploying backend changes (migration / hook)
 
