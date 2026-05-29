@@ -9,6 +9,8 @@ import '../providers/auth_provider.dart';
 import '../providers/custody_provider.dart';
 import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
+import '../providers/update_provider.dart';
+import '../services/update_service.dart';
 import '../services/widget_cache_service.dart';
 import '../widgets/timeline_card.dart';
 
@@ -50,13 +52,21 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     final dashboard = ref.watch(dashboardProvider);
 
     return Scaffold(
-      body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: dashboard.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => Center(child: Text('Error loading schedule: $e')),
-          data: (events) => _ScheduleList(events: events),
-        ),
+      body: Column(
+        children: [
+          const _UpdateBanner(),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _refresh,
+              child: dashboard.when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (e, _) =>
+                    Center(child: Text('Error loading schedule: $e')),
+                data: (events) => _ScheduleList(events: events),
+              ),
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => showModalBottomSheet(
@@ -598,6 +608,184 @@ class _ChildSelector extends ConsumerWidget {
               ))
           .toList(),
       onChanged: (v) => onChanged(v ?? 'All'),
+    );
+  }
+}
+
+// ── In-app update banner ──────────────────────────────────────────────────────
+
+class _UpdateBanner extends ConsumerStatefulWidget {
+  const _UpdateBanner();
+
+  @override
+  ConsumerState<_UpdateBanner> createState() => _UpdateBannerState();
+}
+
+class _UpdateBannerState extends ConsumerState<_UpdateBanner> {
+  bool _dismissed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_dismissed) return const SizedBox.shrink();
+    final info = ref.watch(updateProvider).valueOrNull;
+    if (info == null) return const SizedBox.shrink();
+
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 4, 8),
+        child: Row(
+          children: [
+            Icon(Icons.system_update, color: scheme.onPrimaryContainer, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Update available',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: scheme.onPrimaryContainer)),
+                  Text(
+                    info.latestVersion.isEmpty
+                        ? 'A newer version is ready to install'
+                        : 'Version ${info.latestVersion} is ready to install',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: scheme.onPrimaryContainer.withOpacity(0.8)),
+                  ),
+                ],
+              ),
+            ),
+            TextButton(
+              onPressed: () => showModalBottomSheet<void>(
+                context: context,
+                isScrollControlled: true,
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                builder: (_) => _UpdateSheet(info: info),
+              ),
+              child: const Text('Update'),
+            ),
+            IconButton(
+              icon: Icon(Icons.close, color: scheme.onPrimaryContainer, size: 20),
+              tooltip: 'Dismiss',
+              onPressed: () => setState(() => _dismissed = true),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _UpdateSheet extends StatefulWidget {
+  final UpdateInfo info;
+  const _UpdateSheet({required this.info});
+
+  @override
+  State<_UpdateSheet> createState() => _UpdateSheetState();
+}
+
+class _UpdateSheetState extends State<_UpdateSheet> {
+  double? _progress; // null = idle, 0..1 = downloading
+  bool _installing = false;
+  String? _error;
+
+  bool get _busy => _progress != null || _installing;
+
+  Future<void> _run() async {
+    setState(() {
+      _progress = 0;
+      _error = null;
+    });
+    try {
+      final file = await UpdateService.download(
+        widget.info.apkUrl,
+        (p) => setState(() => _progress = p),
+      );
+      setState(() => _installing = true);
+      await UpdateService.install(file);
+      // The system installer is now in the foreground; close the sheet.
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      setState(() {
+        _error = '$e';
+        _progress = null;
+        _installing = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 24, right: 24, top: 24,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.system_update),
+              const SizedBox(width: 10),
+              Text(
+                widget.info.latestVersion.isEmpty
+                    ? 'Update CoPlan'
+                    : 'Update to ${widget.info.latestVersion}',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          if (widget.info.notes != null) ...[
+            const SizedBox(height: 12),
+            Text(widget.info.notes!,
+                style: Theme.of(context).textTheme.bodyMedium),
+          ],
+          const SizedBox(height: 20),
+          if (_progress != null) ...[
+            LinearProgressIndicator(value: _installing ? null : _progress),
+            const SizedBox(height: 8),
+            Text(
+              _installing
+                  ? 'Opening installer…'
+                  : 'Downloading… ${((_progress ?? 0) * 100).toStringAsFixed(0)}%',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+          if (_error != null) ...[
+            Text(_error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            const SizedBox(height: 12),
+          ],
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _busy ? null : _run,
+              icon: const Icon(Icons.download),
+              label: Text(_error != null ? 'Retry' : 'Download & install'),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'CoPlan will ask permission to install. The app will close while the '
+            'installer runs.',
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall
+                ?.copyWith(color: Colors.grey),
+          ),
+        ],
+      ),
     );
   }
 }
