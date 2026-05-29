@@ -34,6 +34,9 @@ class TimelineCard extends ConsumerWidget {
 
     final timeStr =
         '${event.time.hour.toString().padLeft(2, '0')}:${event.time.minute.toString().padLeft(2, '0')}';
+    final endTimeStr = event.endTime != null
+        ? '${event.endTime!.hour.toString().padLeft(2, '0')}:${event.endTime!.minute.toString().padLeft(2, '0')}'
+        : null;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
@@ -51,13 +54,32 @@ class TimelineCard extends ConsumerWidget {
               color: parentLight,
               padding: const EdgeInsets.symmetric(vertical: 14),
               child: Center(
-                child: Text(
-                  timeStr,
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                    color: parentColor,
-                  ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      timeStr,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        color: parentColor,
+                      ),
+                    ),
+                    if (endTimeStr != null) ...[
+                      Text(
+                        '–',
+                        style: TextStyle(fontSize: 9, color: parentColor.withOpacity(0.6)),
+                      ),
+                      Text(
+                        endTimeStr,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                          color: parentColor,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ),
@@ -144,6 +166,24 @@ class TimelineCard extends ConsumerWidget {
                                   fontSize: 11,
                                   color: Colors.blue.shade700,
                                   fontWeight: FontWeight.w500),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    if (event.note != null && event.note!.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.notes_outlined,
+                              size: 12, color: Colors.grey[500]),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              event.note!,
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.grey[600]),
                             ),
                           ),
                         ],
