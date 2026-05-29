@@ -23,4 +23,13 @@ class AppConstants {
   static const String widgetCacheKey = 'coplan_widget_events';
   static const String widgetAppId = 'com.coplan.app';
   static const String widgetName = 'CoplanWidget';
+
+  /// AppWidget provider (Glance receiver) class names for all three widget
+  /// styles. Updating the cache must redraw every placed style, so we broadcast
+  /// an update to each — not just style 1.
+  static const List<String> widgetReceivers = [
+    'CoplanWidgetReceiver',
+    'CoplanWidget2Receiver',
+    'CoplanWidget3Receiver',
+  ];
 }

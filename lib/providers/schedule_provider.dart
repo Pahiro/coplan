@@ -176,6 +176,7 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
     required String location,
     required bool isShared,
   }) async {
+    final hid = ref.read(householdProvider).valueOrNull?.id;
     await pb.collection('rules_base').create(body: {
       'child_name':  childName,
       'day_of_week': dayOfWeek,
@@ -183,6 +184,7 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
       'activity':    activity,
       'location':    location,
       'is_shared':   isShared,
+      if (hid != null) 'household': hid,
     });
     _invalidate();
   }
@@ -285,11 +287,13 @@ class WeekdayRulesNotifier extends AsyncNotifier<void> {
       }
     } catch (_) {}
 
+    final hid = ref.read(householdProvider).valueOrNull?.id;
     await pb.collection('custody_weekday_rules').create(body: {
       'day_of_week':     dayOfWeek,
       'assigned_parent': assignedParent,
       'reason':          reason,
       'active':          true,
+      if (hid != null) 'household': hid,
     });
 
     ref.invalidate(weekdayRulesProvider);
@@ -339,6 +343,7 @@ class RecurringArrangementsNotifier extends AsyncNotifier<void> {
       }
     } catch (_) {}
 
+    final hid = ref.read(householdProvider).valueOrNull?.id;
     await pb.collection('custody_recurring').create(body: {
       'day_of_week':        dayOfWeek,
       'to_parent':          toParent,
@@ -352,6 +357,7 @@ class RecurringArrangementsNotifier extends AsyncNotifier<void> {
       'note':               note ?? '',
       'active':             true,
       'created_by':         pb.authStore.record?.id ?? '',
+      if (hid != null) 'household': hid,
     });
     _invalidate();
   }

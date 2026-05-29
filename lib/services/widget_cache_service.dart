@@ -31,11 +31,15 @@ class WidgetCacheService {
 
       final json = jsonEncode(upcoming.map((e) => e.toJson()).toList());
       await HomeWidget.saveWidgetData<String>(AppConstants.widgetCacheKey, json);
-      await HomeWidget.updateWidget(
-        androidName: AppConstants.widgetName,
-        qualifiedAndroidName:
-            '${AppConstants.widgetAppId}.${AppConstants.widgetName}',
-      );
+      // Redraw every placed widget style. Each style is a separate Glance
+      // receiver, so we must broadcast an update to all three — updating only
+      // 'CoplanWidget' left Material/Timeline widgets showing stale data.
+      for (final receiver in AppConstants.widgetReceivers) {
+        await HomeWidget.updateWidget(
+          androidName: receiver,
+          qualifiedAndroidName: '${AppConstants.widgetAppId}.$receiver',
+        );
+      }
     } catch (_) {
       // Fail silently — widget will show stale data until next successful sync
     }

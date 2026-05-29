@@ -242,6 +242,7 @@ class CustodyRequestsNotifier
   }) async {
     final auth = ref.read(authProvider).valueOrNull;
     final myId = auth?.userId ?? '';
+    final hid  = ref.read(householdProvider).valueOrNull?.id;
     final body = {
       'target_date':     targetDate,
       'child_name':      childName,
@@ -254,6 +255,7 @@ class CustodyRequestsNotifier
       'is_shared':       true,
       'activity':        activity,
       'location':        location,
+      if (hid != null) 'household': hid,
     };
     try {
       await pb.collection('manual_overrides').create(body: body);
