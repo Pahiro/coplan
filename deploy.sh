@@ -159,8 +159,8 @@ if [ "$SKIP_WEB" = false ]; then
     fi
 
     info "Deploying web to pb_public (alongside APK)..."
-    # Sync web build into pb_public root (excludes the APK so rsync doesn't delete it)
-    rsync -az --exclude='coplan-latest.apk' "$SCRIPT_DIR/build/web/" "$SERVER:$PB_DIR/pb_public/"
+    # Copy web build into pb_public root, preserving the existing APK
+    scp -r "$SCRIPT_DIR/build/web/"* "$SERVER:$PB_DIR/pb_public/"
     ok "Web deployed to $PB_URL/"
 else
     info "Skipping web deployment"
