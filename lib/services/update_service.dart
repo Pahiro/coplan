@@ -72,9 +72,14 @@ class UpdateService {
     final file = File('${dir.path}/coplan-update.apk');
     if (await file.exists()) await file.delete();
 
+    // Cache-bust: a CDN (e.g. Cloudflare) may otherwise serve a stale APK for a
+    // reused URL like coplan-latest.apk. A unique query makes a fresh request.
+    final sep = url.contains('?') ? '&' : '?';
+    final bustedUrl = '$url${sep}cb=${DateTime.now().millisecondsSinceEpoch}';
+
     final client = HttpClient();
     try {
-      final req = await client.getUrl(Uri.parse(url));
+      final req = await client.getUrl(Uri.parse(bustedUrl));
       final resp = await req.close();
       if (resp.statusCode != 200) {
         throw Exception('Download failed (HTTP ${resp.statusCode})');

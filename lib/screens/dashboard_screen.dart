@@ -44,6 +44,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
   Future<void> _refresh() async {
     ref.invalidate(dashboardProvider);
     ref.invalidate(custodyRequestsProvider);
+    ref.invalidate(updateProvider); // re-check for a newer build
     await WidgetCacheService.updateCache();
   }
 
