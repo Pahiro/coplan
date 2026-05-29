@@ -21,8 +21,10 @@ class EventEditSheet extends ConsumerStatefulWidget {
 class _EventEditSheetState extends ConsumerState<EventEditSheet> {
   late final TextEditingController _activityCtrl;
   late final TextEditingController _locationCtrl;
+  late final TextEditingController _noteCtrl;
   late String   _child;
   late TimeOfDay _time;
+  TimeOfDay?    _endTime;
   late bool     _isShared;
   late DateTime _date;      // only for adhoc/create-rule (date picker)
   late int      _dayOfWeek; // only for base rules (day picker)
@@ -38,8 +40,10 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
     final e = widget.event;
     _activityCtrl = TextEditingController(text: e?.activity ?? '');
     _locationCtrl = TextEditingController(text: e?.location ?? '');
+    _noteCtrl     = TextEditingController(text: e?.note ?? '');
     _child        = e?.childName ?? 'All';
     _time         = e?.time ?? const TimeOfDay(hour: 14, minute: 30);
+    _endTime      = e?.endTime;
     _isShared     = e?.isShared ?? false;
     _date         = e?.date ?? DateTime.now().add(const Duration(days: 1));
     _dayOfWeek    = e?.date.weekday ?? DateTime.monday;
@@ -49,6 +53,7 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
   void dispose() {
     _activityCtrl.dispose();
     _locationCtrl.dispose();
+    _noteCtrl.dispose();
     super.dispose();
   }
 
@@ -60,6 +65,14 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
   Future<void> _pickTime() async {
     final picked = await showTimePicker(context: context, initialTime: _time);
     if (picked != null) setState(() => _time = picked);
+  }
+
+  Future<void> _pickEndTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _endTime ?? _time.replacing(hour: (_time.hour + 1) % 24),
+    );
+    if (picked != null) setState(() => _endTime = picked);
   }
 
   Future<void> _pickDate() async {
@@ -85,6 +98,8 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
               activity:     _activityCtrl.text.trim(),
               location:     _locationCtrl.text.trim(),
               isShared:     _isShared,
+              endTime:      _endTime != null ? _fmtTime(_endTime!) : null,
+              note:         _noteCtrl.text.trim(),
             );
       } else if (_isEditRule) {
         await ref.read(baseRulesNotifierProvider.notifier).updateRule(
@@ -195,6 +210,32 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
             ),
             const SizedBox(height: 12),
 
+            // End time — adhoc overrides only
+            if (_isEditOverride) ...[
+              _TimeField(
+                label: _endTime != null ? 'Ends: ${_fmtTime(_endTime!)}' : 'End time (optional)',
+                onTap: _pickEndTime,
+                icon: Icons.timer_off_outlined,
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            // Notes — adhoc overrides only
+            if (_isEditOverride) ...[
+              TextField(
+                controller: _noteCtrl,
+                textCapitalization: TextCapitalization.sentences,
+                maxLines: 3,
+                minLines: 1,
+                decoration: const InputDecoration(
+                  labelText: 'Notes (optional)',
+                  prefixIcon: Icon(Icons.notes_outlined),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
             // Child
             DropdownButtonFormField<String>(
               value: _child,
@@ -267,17 +308,18 @@ class _DateField extends StatelessWidget {
 class _TimeField extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
-  const _TimeField({required this.label, required this.onTap});
+  final IconData icon;
+  const _TimeField({required this.label, required this.onTap, this.icon = Icons.schedule_outlined});
 
   @override
   Widget build(BuildContext context) => InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(4),
         child: InputDecorator(
-          decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.schedule_outlined),
-            border: OutlineInputBorder(),
-            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          decoration: InputDecoration(
+            prefixIcon: Icon(icon),
+            border: const OutlineInputBorder(),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
           ),
           child: Text(label, style: Theme.of(context).textTheme.bodyLarge),
         ),

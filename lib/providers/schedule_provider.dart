@@ -239,6 +239,8 @@ class ManualOverridesNotifier extends AsyncNotifier<void> {
     required String activity,
     required String location,
     required bool isShared,
+    String? endTime,
+    String? note,
   }) async {
     await pb.collection('manual_overrides').update(id, body: {
       'child_name':    childName,
@@ -247,6 +249,8 @@ class ManualOverridesNotifier extends AsyncNotifier<void> {
       'activity':      activity,
       'location':      location,
       'is_shared':     isShared,
+      'end_time':      endTime ?? '',
+      'note':          note ?? '',
     });
     _invalidate();
   }

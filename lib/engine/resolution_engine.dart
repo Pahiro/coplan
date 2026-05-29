@@ -225,11 +225,13 @@ class ResolutionEngine {
         .map((o) => ResolvedEvent(
               date:           date,
               time:           _parseTime(o.overrideTime ?? '09:00'),
+              endTime:        o.endTime != null ? _parseTime(o.endTime!) : null,
               activity:       o.adhocActivity ?? '',
               location:       o.adhocLocation ?? '',
               childName:      o.childName,
               assignedParent: o.assignedParent,
               overrideReason: o.reason.isEmpty ? null : o.reason,
+              note:           o.note,
               isAdhoc:        true,
               isShared:       o.isShared,
               overrideId:     o.id,

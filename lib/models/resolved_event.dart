@@ -8,9 +8,11 @@ String normalizeParentName(String s) => s.trim();
 class ResolvedEvent {
   final DateTime date;
   final TimeOfDay time;
+  final TimeOfDay? endTime;
   final String activity;
   final String location;
   final String childName;
+  final String? note;
 
   /// Display name of the responsible parent (e.g. "Bennet", "Jana").
   /// Previously a `Parent` enum — now a plain string so it works with
@@ -63,11 +65,13 @@ class ResolvedEvent {
   const ResolvedEvent({
     required this.date,
     required this.time,
+    this.endTime,
     required this.activity,
     required this.location,
     required this.childName,
     required this.assignedParent,
     this.overrideReason,
+    this.note,
     this.isAdhoc = false,
     this.isShared = false,
     this.ruleId,
