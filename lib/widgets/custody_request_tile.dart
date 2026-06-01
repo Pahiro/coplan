@@ -79,10 +79,10 @@ class CustodyRequestTile extends ConsumerWidget {
         !request.isDayTransfer;
 
     final (statusColor, statusBg) = switch (request.status) {
-      CustodyStatus.accepted  => (Colors.green,  Colors.green.shade50),
-      CustodyStatus.declined  => (Colors.red,    Colors.red.shade50),
-      CustodyStatus.completed => (Colors.grey,   Colors.grey.shade100),
-      CustodyStatus.pending   => (Colors.orange, Colors.orange.shade50),
+      CustodyStatus.accepted  => (Colors.green,  Colors.green.withValues(alpha: 0.15)),
+      CustodyStatus.declined  => (Colors.red,    Colors.red.withValues(alpha: 0.15)),
+      CustodyStatus.completed => (Colors.grey,   Colors.grey.withValues(alpha: 0.15)),
+      CustodyStatus.pending   => (Colors.orange, Colors.orange.withValues(alpha: 0.15)),
     };
 
     final kindLabel = request.isDayTransfer ? 'Day transfer' : 'Handover';

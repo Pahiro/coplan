@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- In-app update: launch the package installer for a downloaded APK -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Allow requesting battery-optimisation exemption so background notifications work -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:label="CoPlan"

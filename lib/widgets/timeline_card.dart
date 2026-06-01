@@ -249,21 +249,21 @@ class TimelineCard extends ConsumerWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 6, vertical: 3),
                       decoration: BoxDecoration(
-                        color: Colors.teal.shade50,
+                        color: Colors.teal.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: Colors.teal.shade200),
+                        border: Border.all(color: Colors.teal.withValues(alpha: 0.4)),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(Icons.people_outline,
-                              size: 11, color: Colors.teal.shade700),
+                              size: 11, color: Colors.teal),
                           const SizedBox(width: 3),
                           Text(
                             'Both',
                             style: TextStyle(
                                 fontSize: 10,
-                                color: Colors.teal.shade700,
+                                color: Colors.teal,
                                 fontWeight: FontWeight.w600),
                           ),
                         ],

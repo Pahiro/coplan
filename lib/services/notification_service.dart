@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 /// Wraps flutter_local_notifications (mobile) and in-app SnackBar (all platforms).
@@ -15,6 +16,8 @@ class NotificationService {
       GlobalKey<ScaffoldMessengerState>();
 
   static final _plugin = FlutterLocalNotificationsPlugin();
+
+  static const _systemChannel = MethodChannel('com.coplan.app/system');
 
   static const _channel = AndroidNotificationChannel(
     'coplan_requests',
@@ -90,5 +93,25 @@ class NotificationService {
         ),
       ),
     );
+  }
+
+  /// Returns true when Android is still optimising the app's battery (i.e.
+  /// the app is NOT exempt, so background notifications may be suppressed).
+  static Future<bool> isBatteryOptimized() async {
+    if (kIsWeb) return false;
+    try {
+      return await _systemChannel.invokeMethod<bool>('isBatteryOptimized') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Opens the system dialog that lets the user exempt CoPlan from battery
+  /// optimisation, enabling reliable background notifications.
+  static Future<void> requestBatteryExemption() async {
+    if (kIsWeb) return;
+    try {
+      await _systemChannel.invokeMethod('requestBatteryExemption');
+    } catch (_) {}
   }
 }
