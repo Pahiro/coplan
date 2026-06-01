@@ -99,7 +99,9 @@ ssh root@192.168.1.119 "systemctl start coplan && sleep 4 && curl -s http://loca
 ## Publishing an app update (the in-app updater)
 
 The app shows an "Update available" banner by comparing its build number to
-`app_settings` keys. To release:
+`app_settings` keys. To release, run **`./deploy.sh`** from the repo root
+(handles version bump, build, backend, APK upload, `app_settings`, and web in
+one shot). Manual equivalent:
 
 1. Bump `version:` in `pubspec.yaml` (e.g. `1.0.4+5` → versionCode 5).
 2. `flutter build apk --release --dart-define=PB_URL=https://coplan.vdgryp.co.za`
@@ -108,7 +110,9 @@ The app shows an "Update available" banner by comparing its build number to
    - `latest_build` = new versionCode
    - `latest_version` = display version
    - `apk_url` = `https://coplan.vdgryp.co.za/coplan-latest.apk?v=<build>`
-   - `update_notes` = short notes
+   - `update_notes` = short user-facing release notes (shown in the update banner)
+   - ⚠️ **Always set `update_notes`** — the banner shows whatever is in this field,
+     so leaving it stale means users see notes from a previous release.
 5. ⚠️ **Cloudflare caches the APK** at a reused URL — *must* cache-bust. The
    `?v=<build>` query is required (and the client also appends its own
    cache-bust param from build 5+). Verify with
