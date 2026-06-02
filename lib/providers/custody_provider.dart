@@ -76,7 +76,9 @@ class CustodyRequestsNotifier
     final auth      = ref.read(authProvider).valueOrNull;
     final myId      = auth?.userId ?? '';
     final myName    = auth?.userName?.trim() ?? 'Parent';
-    final householdId = ref.read(householdProvider).valueOrNull?.id;
+    final household = await ref.read(householdProvider.future);
+    final householdId = household?.id;
+    if (householdId == null) throw Exception('No active household — cannot create custody request');
 
     final bool isHelperRequest =
         recipientUserId != null && recipientName != null;
@@ -108,7 +110,7 @@ class CustodyRequestsNotifier
       'requested_from':    requestedFrom,
       'to_parent_collects': toParentCollects,
       'to_parent_returns':  toParentReturns,
-      if (householdId != null) 'household': householdId,
+      'household': householdId,
     };
 
     try {

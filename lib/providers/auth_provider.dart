@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../core/pb_client.dart';
 
@@ -25,6 +26,7 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
   Future<AuthState> build() async {
     if (pb.authStore.isValid) {
       final model = pb.authStore.record;
+      if (model?.id != null) _stampClientVersion(model!.id);
       return AuthState(
         isLoggedIn: true,
         userId: model?.id,
@@ -40,6 +42,7 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
     state = await AsyncValue.guard(() async {
       final result =
           await pb.collection('users').authWithPassword(email, password);
+      _stampClientVersion(result.record?.id ?? '');
       return AuthState(
         isLoggedIn: true,
         userId: result.record?.id,
@@ -47,6 +50,15 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
         activeHouseholdId: result.record?.data['active_household'] as String?,
       );
     });
+  }
+
+  void _stampClientVersion(String userId) {
+    if (userId.isEmpty) return;
+    PackageInfo.fromPlatform().then((pkg) {
+      pb.collection('users').update(userId, body: {
+        'client_version': '${pkg.version}+${pkg.buildNumber}',
+      });
+    }).catchError((_) {});
   }
 
   Future<void> logout() async {
@@ -70,6 +82,7 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
       });
       final result =
           await pb.collection('users').authWithPassword(email, password);
+      _stampClientVersion(result.record?.id ?? '');
       return AuthState(
         isLoggedIn: true,
         userId: result.record?.id,
