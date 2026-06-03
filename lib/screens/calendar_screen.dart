@@ -5,8 +5,8 @@ import 'package:intl/intl.dart';
 import '../providers/absence_provider.dart';
 import '../providers/schedule_provider.dart';
 import '../widgets/absence_banner.dart';
-import '../widgets/add_event_sheet.dart';
 import '../widgets/month_grid.dart';
+import '../widgets/new_action_sheet.dart';
 import '../widgets/timeline_card.dart';
 import '../widgets/week_strip.dart';
 
@@ -77,14 +77,9 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
 
     return Scaffold(
       floatingActionButton: FloatingActionButton(
-        tooltip: 'Add to schedule',
-        onPressed: () => showModalBottomSheet<void>(
-          context: context,
-          isScrollControlled: true,
-          shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-          builder: (_) => AddEventSheet(initialDate: _selectedDay),
-        ),
+        tooltip: 'New…',
+        onPressed: () =>
+            showNewActionSheet(context, initialDate: _selectedDay),
         child: const Icon(Icons.add),
       ),
       body: Column(
