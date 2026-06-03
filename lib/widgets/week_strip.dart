@@ -8,6 +8,7 @@ import '../models/app_colors.dart';
 import '../models/custody_request.dart';
 import '../models/recurring_arrangement.dart';
 import '../models/weekday_rule.dart';
+import '../providers/absence_provider.dart';
 import '../providers/colors_provider.dart';
 import '../providers/custody_provider.dart';
 import '../providers/household_provider.dart';
@@ -42,6 +43,7 @@ class WeekStrip extends ConsumerWidget {
             ?.where((r) => r.isAccepted)
             .toList() ??
         const <CustodyRequest>[];
+    final absences = ref.watch(absencePeriodsProvider).valueOrNull ?? const [];
 
     return rulesAsync.when(
       loading: () => const SizedBox(height: 72),
@@ -54,6 +56,7 @@ class WeekStrip extends ConsumerWidget {
             custodyRequests:       custodyRequests,
             weekdayRules:          weekdayRules,
             recurringArrangements: recurring,
+            absencePeriods:        absences,
             rotationAnchor:        household?.rotationAnchorDate ?? DateTime(2025, 1, 6),
             rotationParentEven:    household?.rotationParentEvenName ?? 'Bennet',
             rotationParentOdd:     household?.rotationParentOddName ?? 'Jana',
