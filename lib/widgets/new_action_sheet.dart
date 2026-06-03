@@ -57,8 +57,8 @@ class _NewActionSheet extends StatelessWidget {
               title: const Text('One-off event'),
               subtitle: const Text('Activity, outing or adhoc pickup'),
               trailing: const Icon(Icons.chevron_right),
-              onTap: () =>
-                  _open(context, AddEventSheet(initialDate: initialDate)),
+              onTap: () => _open(context,
+                  AddEventSheet(initialDate: initialDate ?? DateTime.now())),
             ),
             ListTile(
               leading: const Icon(Icons.hiking),
