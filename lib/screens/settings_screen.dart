@@ -6,11 +6,13 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../models/app_colors.dart';
 import '../models/rotation_scheme.dart';
+import '../providers/absence_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/colors_provider.dart';
 import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 import '../providers/theme_provider.dart';
+import '../widgets/mark_absence_sheet.dart';
 import '../services/notification_service.dart';
 import 'export_screen.dart';
 
@@ -19,10 +21,11 @@ class SettingsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final colorsAsync = ref.watch(colorsProvider);
-    final themeMode   = ref.watch(themeProvider).valueOrNull ?? ThemeMode.system;
-    final myName      = ref.watch(authProvider).valueOrNull?.userName ?? '';
-    final household   = ref.watch(householdProvider).valueOrNull;
+    final colorsAsync    = ref.watch(colorsProvider);
+    final themeMode      = ref.watch(themeProvider).valueOrNull ?? ThemeMode.system;
+    final myName         = ref.watch(authProvider).valueOrNull?.userName ?? '';
+    final household      = ref.watch(householdProvider).valueOrNull;
+    final householdMode  = household?.mode ?? 'custody';
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -35,7 +38,14 @@ class SettingsScreen extends ConsumerWidget {
             16 + MediaQuery.of(context).padding.bottom,
           ),
           children: [
-            // ── Theme ──────────────────────────────────────────────────────
+
+            // ── 1. Notifications ───────────────────────────────────────────
+            // Surfaced first because it may require user action (battery opt).
+            _SectionHeader('Notifications'),
+            const _NotificationSettingsCard(),
+            const SizedBox(height: 24),
+
+            // ── 2. Appearance ──────────────────────────────────────────────
             _SectionHeader('Appearance'),
             Card(
               margin: const EdgeInsets.only(bottom: 16),
@@ -73,50 +83,13 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ),
             ),
-            // ── Household ──────────────────────────────────────────────────
+
+            // ── 3. Household ───────────────────────────────────────────────
+            // Members, mode and rotation all describe how the household works.
             _SectionHeader('Household'),
             const _HouseholdSection(),
-            const SizedBox(height: 24),
-
-            _SectionHeader('Parent colours'),
-
-            // Parent colour rows from household data
-            ...(household?.parents ?? const []).map((m) => _ColorRow(
-              label: m.displayName,
-              description: "Shown on ${m.displayName}'s events and calendar blocks",
-              current: colors.parentColor(m.displayName),
-              isEditable: myName == m.displayName,
-              onChanged: (c) =>
-                  ref.read(colorsProvider.notifier).updateMyColor(c),
-            )),
-
-            // Helper colours (grandparents, nannies, …) — shown only if any
-            if ((household?.helpers ?? const []).isNotEmpty) ...[
-              const SizedBox(height: 24),
-              _SectionHeader('Helper colours'),
-              ...household!.helpers.map((m) => _ColorRow(
-                label: m.displayName,
-                description: "Shown when ${m.displayName} is covering a pickup",
-                current: colors.parentColor(m.displayName),
-                isEditable: myName == m.displayName,
-                onChanged: (c) =>
-                    ref.read(colorsProvider.notifier).updateMyColor(c),
-              )),
-            ],
-            const SizedBox(height: 24),
-            _SectionHeader('Children'),
-            Text(
-              'Children in this household. Colours show on event cards when a '
-              'child has a solo event.',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: Colors.grey),
-            ),
-            const SizedBox(height: 8),
-            const _ChildrenSection(),
-            const SizedBox(height: 24),
-            _SectionHeader('Household mode'),
+            const SizedBox(height: 16),
+            // Household mode (custody / shared) sits under the household card.
             Card(
               margin: const EdgeInsets.only(bottom: 16),
               child: Padding(
@@ -124,6 +97,9 @@ class SettingsScreen extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    const Text('Mode',
+                        style: TextStyle(fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 10),
                     SegmentedButton<String>(
                       segments: const [
                         ButtonSegment(
@@ -137,29 +113,65 @@ class SettingsScreen extends ConsumerWidget {
                           label: Text('Shared'),
                         ),
                       ],
-                      selected: {ref.watch(householdProvider).valueOrNull?.mode ?? 'custody'},
+                      selected: {householdMode},
                       onSelectionChanged: (s) =>
                           ref.read(householdProvider.notifier).updateMode(s.first),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      ref.watch(householdProvider).valueOrNull?.mode == 'shared'
+                      householdMode == 'shared'
                           ? 'Both parents are always responsible. '
                             'Use requests to coordinate who handles pickups.'
                           : 'Days rotate between parents by the scheme below. '
                             'Requests transfer custody for a day or time window.',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey),
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.grey),
                     ),
                   ],
                 ),
               ),
             ),
-            // Only show rotation settings in custody mode
-            if ((ref.watch(householdProvider).valueOrNull?.mode ?? 'custody') == 'custody') ...[
-              _SectionHeader('Rotation start'),
+            const SizedBox(height: 24),
+
+            // ── 4. People & colours ────────────────────────────────────────
+            // Colours and children are cosmetic / member management — grouped.
+            _SectionHeader('People & colours'),
+            ...(household?.parents ?? const []).map((m) => _ColorRow(
+              label: m.displayName,
+              description: "Shown on ${m.displayName}'s events and calendar blocks",
+              current: colors.parentColor(m.displayName),
+              isEditable: myName == m.displayName,
+              onChanged: (c) =>
+                  ref.read(colorsProvider.notifier).updateMyColor(c),
+            )),
+            if ((household?.helpers ?? const []).isNotEmpty)
+              ...household!.helpers.map((m) => _ColorRow(
+                label: m.displayName,
+                description: "Shown when ${m.displayName} is covering a pickup",
+                current: colors.parentColor(m.displayName),
+                isEditable: myName == m.displayName,
+                onChanged: (c) =>
+                    ref.read(colorsProvider.notifier).updateMyColor(c),
+              )),
+            const SizedBox(height: 8),
+            Text(
+              'Children — colours show on event cards for solo events.',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: Colors.grey),
+            ),
+            const SizedBox(height: 8),
+            const _ChildrenSection(),
+            const SizedBox(height: 24),
+
+            // ── 5. Schedule (custody-only) ─────────────────────────────────
+            if (householdMode == 'custody') ...[
+              _SectionHeader('Schedule'),
               Text(
-                'The date the cycle begins (Day 1) and which parent has the '
-                'children that day.',
+                'Rotation cycle start, pattern, and standing weekday rules.',
                 style: Theme.of(context)
                     .textTheme
                     .bodySmall
@@ -167,23 +179,12 @@ class SettingsScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 8),
               const _RotationAnchorCard(),
-              const SizedBox(height: 24),
-              _SectionHeader('Rotation scheme'),
-              Text(
-                'How custody days rotate between parents from the start date above.',
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: Colors.grey),
-              ),
               const SizedBox(height: 8),
               _RotationSchemePicker(ref: ref),
-              const SizedBox(height: 24),
-              _SectionHeader('Recurring schedule'),
+              const SizedBox(height: 16),
               Text(
-                'Standing weekday custody rules — these override the week rotation '
-                'every week for that day. Created via the "Repeat every …" toggle '
-                'on a pickup or drop-off request.',
+                'Recurring rules — standing weekday overrides created via the '
+                '"Repeat every …" toggle on a pickup or drop-off request.',
                 style: Theme.of(context)
                     .textTheme
                     .bodySmall
@@ -191,11 +192,15 @@ class SettingsScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 8),
               const _RecurringRulesSection(),
-            ], // end custody-only section
+              const SizedBox(height: 24),
+            ],
+
+            // ── 6. Absences ────────────────────────────────────────────────
+            _SectionHeader('Absences'),
+            const _AbsenceSection(),
             const SizedBox(height: 24),
-            _SectionHeader('Notifications'),
-            const _NotificationSettingsCard(),
-            const SizedBox(height: 24),
+
+            // ── 7. Data ────────────────────────────────────────────────────
             _SectionHeader('Data'),
             Card(
               child: ListTile(
@@ -210,12 +215,13 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 24),
-            // ── App version ─────────────────────────────────────────────────
+
+            // ── Version footer ─────────────────────────────────────────────
             Center(
               child: FutureBuilder<PackageInfo>(
                 future: PackageInfo.fromPlatform(),
                 builder: (context, snap) {
-                  final info = snap.data;
+                  final info    = snap.data;
                   final version = info != null
                       ? 'v${info.version}+${info.buildNumber}'
                       : '...';
@@ -226,7 +232,7 @@ class SettingsScreen extends ConsumerWidget {
                       color: Theme.of(context)
                           .colorScheme
                           .onSurfaceVariant
-                          .withOpacity(0.6),
+                          .withValues(alpha: 0.6),
                     ),
                   );
                 },
@@ -1221,4 +1227,99 @@ class _CyclePreview extends StatelessWidget {
         height: 10,
         decoration: BoxDecoration(color: color, shape: BoxShape.circle),
       );
+}
+
+// ── Absence section ───────────────────────────────────────────────────────────
+
+class _AbsenceSection extends ConsumerWidget {
+  const _AbsenceSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final absencesAsync = ref.watch(absencePeriodsProvider);
+    final myName = ref.watch(authProvider).valueOrNull?.userName?.trim() ?? '';
+    final fmt    = DateFormat('d MMM yyyy');
+
+    void openSheet() => showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => const MarkAbsenceSheet(),
+    );
+
+    return Card(
+      child: Column(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.hiking),
+            title: const Text('Mark absence'),
+            subtitle: const Text('Custody shifts to the other parent while you\'re away'),
+            trailing: const Icon(Icons.add),
+            onTap: openSheet,
+          ),
+          absencesAsync.when(
+            loading: () => const Padding(
+              padding: EdgeInsets.all(16),
+              child: CircularProgressIndicator(),
+            ),
+            error: (e, _) => const SizedBox.shrink(),
+            data: (absences) {
+              final mine = absences
+                  .where((a) => a.absentParent == myName ||
+                      a.createdBy == (ref.read(authProvider).valueOrNull?.userId ?? ''))
+                  .toList();
+              if (mine.isEmpty) return const SizedBox.shrink();
+              return Column(
+                children: [
+                  const Divider(height: 1),
+                  ...mine.map((a) => ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.event_busy, size: 20),
+                    title: Text(a.reason.isNotEmpty ? a.reason : 'Absence'),
+                    subtitle: Text(
+                      '${fmt.format(a.startDate)} – ${fmt.format(a.endDate)}'
+                      ' · ${a.durationDays} ${a.durationDays == 1 ? "day" : "days"}',
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline, size: 20),
+                      tooltip: 'Remove absence',
+                      onPressed: () async {
+                        final confirmed = await showDialog<bool>(
+                          context: context,
+                          builder: (_) => AlertDialog(
+                            title: const Text('Remove absence?'),
+                            content: Text(
+                              'Remove "${a.reason.isNotEmpty ? a.reason : "absence"}" '
+                              '(${fmt.format(a.startDate)} – ${fmt.format(a.endDate)})? '
+                              'Custody will revert to the normal schedule.',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, false),
+                                child: const Text('Cancel'),
+                              ),
+                              FilledButton(
+                                onPressed: () => Navigator.pop(context, true),
+                                child: const Text('Remove'),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (confirmed == true) {
+                          await ref
+                              .read(absencePeriodsProvider.notifier)
+                              .delete(a.id);
+                        }
+                      },
+                    ),
+                  )),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
 }

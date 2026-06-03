@@ -1,6 +1,7 @@
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 
+import '../models/absence_period.dart';
 import '../models/base_rule.dart';
 import '../models/custody_request.dart';
 import '../models/manual_override.dart';
@@ -13,8 +14,9 @@ import '../models/weekday_rule.dart';
 ///
 /// Priority for any given event slot:
 ///   1. Manual override      (date-specific record in manual_overrides)
-///   2. Weekday rule         (recurring day-of-week record in custody_weekday_rules)
-///   3. Base rotation        (pattern-based from [rotationScheme] and [rotationAnchor])
+///   2. Absence block        (absent parent → custody flips to the other parent)
+///   3. Weekday rule         (recurring day-of-week record in custody_weekday_rules)
+///   4. Base rotation        (pattern-based from [rotationScheme] and [rotationAnchor])
 ///
 /// Accepted [CustodyRequest]s layer on top:
 ///   - Day transfers  override [dayOwner] for that date (higher priority than weekday rules).
@@ -29,6 +31,7 @@ class ResolutionEngine {
   final List<CustodyRequest>       custodyRequests;
   final List<WeekdayRule>          weekdayRules;
   final List<RecurringArrangement> recurringArrangements;
+  final List<AbsencePeriod>        absencePeriods;
 
   /// Rotation config — previously from AppConstants, now passed in.
   final DateTime rotationAnchor;
@@ -57,6 +60,7 @@ class ResolutionEngine {
     this.custodyRequests       = const [],
     this.weekdayRules          = const [],
     this.recurringArrangements = const [],
+    this.absencePeriods        = const [],
   }) : rotationScheme = rotationScheme ?? RotationScheme.weekly();
 
   /// True when this engine operates in shared-household mode (no rotation).
@@ -87,13 +91,34 @@ class ResolutionEngine {
 
   /// The primary responsible parent for an entire day.
   ///
-  /// Priority: accepted day-transfer request > weekday rule > week rotation.
-  /// In shared mode: transfers still apply, but no rotation/weekday rules.
+  /// Priority: accepted day-transfer request > weekday rule > week rotation >
+  ///           absence flip. Manual overrides are applied per-event in
+  ///           [_resolveRule] but day-level absence is checked here so the
+  ///           calendar grid colours correctly.
   String dayOwner(DateTime date) {
     final transfer = dayTransferFor(date);
     if (transfer != null) return transfer.toParent;
     if (isSharedMode) return 'Both';
-    return _weekdayRuleParent(date.weekday) ?? weekOwner(date);
+    final scheduled = _weekdayRuleParent(date.weekday) ?? weekOwner(date);
+    return _applyAbsence(scheduled, date);
+  }
+
+  /// Returns the absence covering [date] where the absent parent matches
+  /// [scheduledParent], or null if none.
+  AbsencePeriod? absenceFor(DateTime date) =>
+      absencePeriods.firstWhereOrNull((a) => a.coversDate(date));
+
+  /// If [scheduledParent] is absent on [date], returns the other parent's name;
+  /// otherwise returns [scheduledParent] unchanged.
+  String _applyAbsence(String scheduledParent, DateTime date) {
+    final absence = absenceFor(date);
+    if (absence == null || absence.absentParent != scheduledParent) {
+      return scheduledParent;
+    }
+    // Flip to whichever rotation parent is not absent.
+    if (scheduledParent == rotationParentEven) return rotationParentOdd;
+    if (scheduledParent == rotationParentOdd)  return rotationParentEven;
+    return scheduledParent; // unknown parent name — leave unchanged
   }
 
   /// All accepted custody for [date]: real records plus virtual occurrences
@@ -287,22 +312,23 @@ class ResolutionEngine {
 
     final eventTime = _parseTime(override?.overrideTime ?? rule.eventTime);
 
-    // ── 2. Schedule parent: override > weekday rule > rotation ───────────────
+    // ── 2. Schedule parent: override > absence > weekday rule > rotation ──────
     String scheduleParent;
     String? scheduleReason;
 
     if (override != null) {
+      // Manual overrides are explicit decisions — they win over absence.
       scheduleParent = override.assignedParent;
       scheduleReason = override.reason.isEmpty ? null : override.reason;
     } else {
       final weekdayParent = _weekdayRuleParent(date.weekday);
-      if (weekdayParent != null) {
-        // Weekday rules change the parent but their reason is standing context,
-        // not a per-event annotation — don't show it on every event tile.
-        scheduleParent = weekdayParent;
-        scheduleReason = null;
+      final rotationParent = weekdayParent ?? weekOwner(date);
+      final absence = absenceFor(date);
+      if (absence != null && absence.absentParent == rotationParent) {
+        scheduleParent = _applyAbsence(rotationParent, date);
+        scheduleReason = absence.reason.isNotEmpty ? absence.reason : 'Absence';
       } else {
-        scheduleParent = weekOwner(date);
+        scheduleParent = rotationParent;
         scheduleReason = null;
       }
     }

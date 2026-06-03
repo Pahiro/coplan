@@ -97,6 +97,9 @@ class CoplanSyncWorker(
             val today     = LocalDate.now()
             val allEvents = mutableListOf<JSONObject>()
 
+            // Fetch absences once; filter per-day below.
+            val allAbsences = fetchCollection(pbUrl, token, "absence_periods")
+
             repeat(3) { i ->
                 val date    = today.plusDays(i.toLong())
                 val dateStr = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
@@ -115,7 +118,8 @@ class CoplanSyncWorker(
                 for (v in virtualRecurring(date, cfg, recurring, weekdayRules, realCustody)) {
                     custody.put(v)
                 }
-                allEvents += resolveDay(date, rules, overrides, weekdayRules, cfg, custody)
+                val dayAbsences = absencesForDate(date, allAbsences)
+                allEvents += resolveDay(date, rules, overrides, weekdayRules, cfg, custody, dayAbsences)
             }
 
             // Keep only events that haven't happened yet today (take first 3)
@@ -281,6 +285,30 @@ class CoplanSyncWorker(
         return out
     }
 
+    // ── Absence helpers (mirrors Dart AbsencePeriod.coversDate / _applyAbsence) ─
+
+    private fun absencesForDate(date: LocalDate, absences: JSONArray): JSONArray {
+        val out = JSONArray()
+        for (i in 0 until absences.length()) {
+            val a = absences.getJSONObject(i)
+            val start = parseDate(a.optString("start_date")) ?: continue
+            val end   = parseDate(a.optString("end_date"))   ?: continue
+            if (!date.isBefore(start) && !date.isAfter(end)) out.put(a)
+        }
+        return out
+    }
+
+    /** If [scheduled] is absent on this day, flip to the other rotation parent. */
+    private fun applyAbsence(scheduled: String, cfg: Cfg, dayAbsences: JSONArray): String {
+        for (i in 0 until dayAbsences.length()) {
+            val a = dayAbsences.getJSONObject(i)
+            if (a.optString("absent_parent") == scheduled) {
+                return if (scheduled == cfg.evenName) cfg.oddName else cfg.evenName
+            }
+        }
+        return scheduled
+    }
+
     // ── Schedule resolution (mirrors Dart ResolutionEngine.resolveDay) ───────
 
     private fun resolveDay(
@@ -289,7 +317,8 @@ class CoplanSyncWorker(
         overrides: JSONArray,
         weekdayRules: JSONArray,
         cfg: Cfg,
-        custodyRequests: JSONArray
+        custodyRequests: JSONArray,
+        dayAbsences: JSONArray = JSONArray(),
     ): List<JSONObject> {
         val dow     = date.dayOfWeek.value
         val results = mutableListOf<JSONObject>()
@@ -317,8 +346,11 @@ class CoplanSyncWorker(
                 }
             }
 
-            // Priority 2+3 — weekday rule ?? rotation (baseOwner)
-            if (parent == null) parent = baseOwner(date, cfg, weekdayRules)
+            // Priority 2 — absence flip; priority 3 — weekday rule / rotation
+            if (parent == null) {
+                val base = baseOwner(date, cfg, weekdayRules)
+                parent = applyAbsence(base, cfg, dayAbsences)
+            }
 
             // Priority 4 — accepted custody (real + virtual recurring)
             val eventMin = run {

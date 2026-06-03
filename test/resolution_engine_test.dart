@@ -2,6 +2,7 @@ import 'package:flutter/material.dart' show TimeOfDay;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:coplan/engine/resolution_engine.dart';
+import 'package:coplan/models/absence_period.dart';
 import 'package:coplan/models/base_rule.dart';
 import 'package:coplan/models/custody_request.dart';
 import 'package:coplan/models/manual_override.dart';
@@ -17,6 +18,7 @@ ResolutionEngine engine({
   List<CustodyRequest> custody = const [],
   List<WeekdayRule> weekdayRules = const [],
   List<RecurringArrangement> recurring = const [],
+  List<AbsencePeriod> absences = const [],
   required DateTime anchor,
   String even = 'Alice',
   String odd = 'Bob',
@@ -29,11 +31,28 @@ ResolutionEngine engine({
       custodyRequests: custody,
       weekdayRules: weekdayRules,
       recurringArrangements: recurring,
+      absencePeriods: absences,
       rotationAnchor: anchor,
       rotationParentEven: even,
       rotationParentOdd: odd,
       rotationScheme: scheme,
       householdMode: mode,
+    );
+
+AbsencePeriod absence({
+  required String parent,
+  required DateTime start,
+  required DateTime end,
+  String reason = 'Trip',
+}) =>
+    AbsencePeriod(
+      id: 'abs',
+      householdId: 'hh',
+      absentParent: parent,
+      startDate: start,
+      endDate: end,
+      reason: reason,
+      createdBy: 'u1',
     );
 
 BaseRule rule(int dow, String time,
@@ -354,6 +373,77 @@ void main() {
       expect(e.weekOwner(DateTime(2025, 1, 8)), 'Bob'); // day 2
       expect(e.weekOwner(DateTime(2025, 1, 10)), 'Alice'); // day 4
       expect(e.weekOwner(DateTime(2025, 1, 15)), 'Bob'); // day 9
+    });
+  });
+
+  group('absence periods', () {
+    // Alice owns monAnchor week; Bob owns the next week.
+    final aliceDay = DateTime(2025, 1, 6); // Monday, Alice's week
+    final bobDay   = DateTime(2025, 1, 13); // Monday, Bob's week
+
+    test('dayOwner flips to Bob when Alice is absent', () {
+      final e = engine(
+        anchor: monAnchor,
+        absences: [absence(parent: 'Alice', start: aliceDay, end: aliceDay)],
+      );
+      expect(e.dayOwner(aliceDay), 'Bob');
+    });
+
+    test('dayOwner flips to Alice when Bob is absent', () {
+      final e = engine(
+        anchor: monAnchor,
+        absences: [absence(parent: 'Bob', start: bobDay, end: bobDay)],
+      );
+      expect(e.dayOwner(bobDay), 'Alice');
+    });
+
+    test('dayOwner unchanged outside absence range', () {
+      final e = engine(
+        anchor: monAnchor,
+        absences: [absence(parent: 'Alice', start: aliceDay, end: aliceDay)],
+      );
+      expect(e.dayOwner(aliceDay.add(const Duration(days: 1))), 'Alice');
+    });
+
+    test('manual override beats absence — override parent is respected', () {
+      final d = aliceDay;
+      final e = engine(
+        anchor: monAnchor,
+        baseRules: [rule(d.weekday, '08:00')],
+        overrides: [
+          ManualOverride(
+            id: 'ov1', targetDate: d, childName: 'All',
+            assignedParent: 'Alice', reason: 'explicit', createdBy: 'u',
+          ),
+        ],
+        absences: [absence(parent: 'Alice', start: d, end: d)],
+      );
+      // Manual override explicitly assigns Alice — absence does not override it.
+      expect(
+        e.resolveDay(d).first.assignedParent,
+        'Alice',
+      );
+    });
+
+    test('resolveDay shows absence reason on affected events', () {
+      final d = aliceDay;
+      final e = engine(
+        anchor: monAnchor,
+        baseRules: [rule(d.weekday, '08:00')],
+        absences: [absence(parent: 'Alice', start: d, end: d, reason: 'Hiking trip')],
+      );
+      final event = e.resolveDay(d).first;
+      expect(event.assignedParent, 'Bob');
+      expect(event.overrideReason, 'Hiking trip');
+    });
+
+    test('absenceFor returns matching absence', () {
+      final e = engine(
+        anchor: monAnchor,
+        absences: [absence(parent: 'Alice', start: aliceDay, end: aliceDay.add(const Duration(days: 2)))],
+      );
+      expect(e.absenceFor(aliceDay)?.absentParent, 'Alice');
+      expect(e.absenceFor(aliceDay.add(const Duration(days: 3))), isNull);
     });
   });
 }

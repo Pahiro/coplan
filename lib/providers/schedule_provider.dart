@@ -3,12 +3,14 @@ import 'package:pocketbase/pocketbase.dart';
 
 import '../core/pb_client.dart';
 import '../engine/resolution_engine.dart';
+import '../models/absence_period.dart';
 import '../models/base_rule.dart';
 import '../models/custody_request.dart';
 import '../models/manual_override.dart';
 import '../models/recurring_arrangement.dart';
 import '../models/resolved_event.dart';
 import '../models/weekday_rule.dart';
+import 'absence_provider.dart';
 import 'household_provider.dart';
 
 // ── Static data — fetched once, rarely changes ───────────────────────────────
@@ -70,6 +72,9 @@ final resolvedDayProvider =
   final custodyRequests =
       custodyRecords.map((r) => CustodyRequest.fromRecord(r.toJson())).toList();
 
+  final allAbsences = await ref.watch(absencePeriodsProvider.future);
+  final absences    = allAbsences.where((a) => a.coversDate(date)).toList();
+
   final household = ref.watch(householdProvider).valueOrNull;
   final anchor    = household?.rotationAnchorDate ?? DateTime(2025, 1, 6);
   final evenName  = household?.rotationParentEvenName ?? 'Bennet';
@@ -81,6 +86,7 @@ final resolvedDayProvider =
     custodyRequests:       custodyRequests,
     weekdayRules:          weekdayRules,
     recurringArrangements: recurring,
+    absencePeriods:        absences,
     rotationAnchor:        anchor,
     rotationParentEven:    evenName,
     rotationParentOdd:     oddName,
@@ -126,6 +132,8 @@ final weekEventsProvider =
   final allCustody =
       custodyRecords.map((r) => CustodyRequest.fromRecord(r.toJson())).toList();
 
+  final allAbsences = await ref.watch(absencePeriodsProvider.future);
+
   final result = <String, List<ResolvedEvent>>{};
   for (int i = 0; i < 7; i++) {
     final date         = monday.add(Duration(days: i));
@@ -141,6 +149,7 @@ final weekEventsProvider =
             r.date.month == date.month &&
             r.date.day   == date.day)
         .toList();
+    final dayAbsences = allAbsences.where((a) => a.coversDate(date)).toList();
     final household = ref.watch(householdProvider).valueOrNull;
     final anchor    = household?.rotationAnchorDate ?? DateTime(2025, 1, 6);
     final evenName  = household?.rotationParentEvenName ?? 'Bennet';
@@ -152,6 +161,7 @@ final weekEventsProvider =
       custodyRequests:       dayCustody,
       weekdayRules:          weekdayRules,
       recurringArrangements: recurring,
+      absencePeriods:        dayAbsences,
       rotationAnchor:        anchor,
       rotationParentEven:    evenName,
       rotationParentOdd:     oddName,

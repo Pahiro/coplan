@@ -126,6 +126,32 @@ cronAdd("freezeRecurring", "5 0 * * *", () => {
                 return weekdayRuleMap[isoDow(d)] || rotationOwner(d);
             };
 
+            // Load absence_periods for this household to apply the custody flip
+            // when freezing past recurring occurrences (mirrors Dart _applyAbsence).
+            let householdAbsences = [];
+            try {
+                const filter = hId
+                    ? `household = "${hId}"`
+                    : "id != ''";
+                householdAbsences = dao.findRecordsByFilter("absence_periods", filter, "", 500, 0);
+            } catch (_) {}
+
+            // Returns true if [parentName] was absent on date string [dStr].
+            const wasAbsent = (parentName, dStr) => {
+                return householdAbsences.some((a) => {
+                    if (a.get("absent_parent") !== parentName) return false;
+                    const s = a.get("start_date");
+                    const e = a.get("end_date");
+                    return dStr >= s && dStr <= e;
+                });
+            };
+
+            // Flip scheduled parent to the other rotation parent if they were absent.
+            const applyAbsence = (scheduled, dStr) => {
+                if (!wasAbsent(scheduled, dStr)) return scheduled;
+                return scheduled === parentEvenName ? parentOddName : parentEvenName;
+            };
+
             const userId = (name) => {
                 try { return dao.findFirstRecordByData("users", "name", name).id; }
                 catch (_) { return ""; }
@@ -152,8 +178,9 @@ cronAdd("freezeRecurring", "5 0 * * *", () => {
                     const dStr = fmt(d);
                     if (startDate && dStr < startDate) continue;
 
-                    // Only fire on weeks where the OTHER parent owns the day.
-                    const owner = baseOwner(d);
+                    // Only fire on weeks where the OTHER parent (after absence flip) owns the day.
+                    const rawOwner = baseOwner(d);
+                    const owner    = applyAbsence(rawOwner, dStr);
                     if (owner === toParent) continue;
 
                     // Skip if a real request already covers this date + child.

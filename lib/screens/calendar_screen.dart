@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../providers/absence_provider.dart';
 import '../providers/schedule_provider.dart';
+import '../widgets/absence_banner.dart';
 import '../widgets/add_event_sheet.dart';
 import '../widgets/month_grid.dart';
 import '../widgets/timeline_card.dart';
@@ -170,6 +172,13 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
             ),
           ),
         ),
+        // ── Absence banner for selected day ───────────────────────────────
+        Builder(builder: (context) {
+          final absences = ref.watch(absencePeriodsProvider).valueOrNull ?? [];
+          final absence  = absences.where((a) => a.coversDate(_selectedDay)).firstOrNull;
+          if (absence == null) return const SizedBox.shrink();
+          return AbsenceBanner(absence: absence);
+        }),
         // ── Day events ─────────────────────────────────────────────────────
         Expanded(
           child: weekEvents.when(

@@ -8,6 +8,7 @@ import '../models/base_rule.dart';
 import '../models/custody_request.dart';
 import '../models/recurring_arrangement.dart';
 import '../models/weekday_rule.dart';
+import '../providers/absence_provider.dart';
 import '../providers/colors_provider.dart';
 import '../providers/custody_provider.dart';
 import '../providers/household_provider.dart';
@@ -44,6 +45,7 @@ class MonthGrid extends ConsumerWidget {
             ?.where((r) => r.isAccepted)
             .toList() ??
         const <CustodyRequest>[];
+    final absences = ref.watch(absencePeriodsProvider).valueOrNull ?? const [];
 
     final household = ref.watch(householdProvider).valueOrNull;
     final engine = ResolutionEngine(
@@ -52,6 +54,7 @@ class MonthGrid extends ConsumerWidget {
         custodyRequests:       custodyRequests,
         weekdayRules:          weekdayRules,
         recurringArrangements: recurring,
+        absencePeriods:        absences,
         rotationAnchor:        household?.rotationAnchorDate ?? DateTime(2025, 1, 6),
         rotationParentEven:    household?.rotationParentEvenName ?? 'Bennet',
         rotationParentOdd:     household?.rotationParentOddName ?? 'Jana',

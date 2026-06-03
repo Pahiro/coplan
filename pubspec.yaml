@@ -1,7 +1,7 @@
 name: coplan
 description: Co-parenting logistics planner for Bennet & Jana.
 publish_to: 'none'
-version: 1.0.16+17
+version: 1.0.18+19
 
 environment:
   sdk: '>=3.3.0 <4.0.0'

@@ -5,13 +5,16 @@ import 'package:intl/intl.dart';
 
 import '../core/constants.dart';
 import '../models/resolved_event.dart';
+import '../providers/absence_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/custody_provider.dart';
 import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 import '../providers/update_provider.dart';
+import '../services/notification_service.dart';
 import '../services/update_service.dart';
 import '../services/widget_cache_service.dart';
+import '../widgets/absence_banner.dart';
 import '../widgets/timeline_card.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
@@ -56,6 +59,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
       body: Column(
         children: [
           const _UpdateBanner(),
+          const _BatteryBanner(),
           Expanded(
             child: RefreshIndicator(
               onRefresh: _refresh,
@@ -87,17 +91,21 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
 
 // ── Schedule list ─────────────────────────────────────────────────────────────
 
-class _ScheduleList extends StatelessWidget {
+class _ScheduleList extends ConsumerWidget {
   final List<ResolvedEvent> events;
   const _ScheduleList({required this.events});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final today    = DateTime.now();
     final tomorrow = today.add(const Duration(days: 1));
+    final absences = ref.watch(absencePeriodsProvider).valueOrNull ?? [];
 
     bool sameDay(DateTime a, DateTime b) =>
         a.year == b.year && a.month == b.month && a.day == b.day;
+
+    final todayAbsence    = absences.where((a) => a.coversDate(today)).firstOrNull;
+    final tomorrowAbsence = absences.where((a) => a.coversDate(tomorrow)).firstOrNull;
 
     final todayEvents    = events.where((e) => sameDay(e.date, today)).toList();
     final tomorrowEvents = events.where((e) => sameDay(e.date, tomorrow)).toList();
@@ -106,12 +114,14 @@ class _ScheduleList extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
       children: [
         _SectionLabel('Today — ${DateFormat('EEEE, d MMMM').format(today)}'),
+        if (todayAbsence != null) AbsenceBanner(absence: todayAbsence),
         if (todayEvents.isEmpty)
           const _EmptySlot()
         else
           ...todayEvents.map((e) => TimelineCard(event: e)),
         const SizedBox(height: 20),
         _SectionLabel('Tomorrow — ${DateFormat('EEEE, d MMMM').format(tomorrow)}'),
+        if (tomorrowAbsence != null) AbsenceBanner(absence: tomorrowAbsence),
         if (tomorrowEvents.isEmpty)
           const _EmptySlot()
         else
@@ -609,6 +619,104 @@ class _ChildSelector extends ConsumerWidget {
               ))
           .toList(),
       onChanged: (v) => onChanged(v ?? 'All'),
+    );
+  }
+}
+
+// ── Battery optimisation banner ───────────────────────────────────────────────
+//
+// Shown when Android still has CoPlan under battery optimisation, which
+// suppresses background notifications. Dismissed for the session once the user
+// taps "Fix" (the system dialog may grant the exemption).
+
+class _BatteryBanner extends StatefulWidget {
+  const _BatteryBanner();
+
+  @override
+  State<_BatteryBanner> createState() => _BatteryBannerState();
+}
+
+class _BatteryBannerState extends State<_BatteryBanner>
+    with WidgetsBindingObserver {
+  bool? _optimized;   // null = not checked yet
+  bool _dismissed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _check();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Re-check when returning from the system settings dialog.
+    if (state == AppLifecycleState.resumed) _check();
+  }
+
+  Future<void> _check() async {
+    final v = await NotificationService.isBatteryOptimized();
+    if (mounted) setState(() => _optimized = v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Show only when battery optimisation is confirmed ON and not dismissed.
+    if (_optimized != true || _dismissed) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.errorContainer,
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              Icon(Icons.notifications_paused_outlined,
+                  size: 20, color: theme.colorScheme.onErrorContainer),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Background notifications may be blocked — tap Fix to allow them.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onErrorContainer,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                style: TextButton.styleFrom(
+                  foregroundColor: theme.colorScheme.onErrorContainer,
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+                onPressed: () async {
+                  await NotificationService.requestBatteryExemption();
+                  // The system dialog will resume the app — didChangeAppLifecycleState
+                  // will re-check. Dismiss immediately so the banner goes away if
+                  // the user granted the exemption or chose to ignore it.
+                  setState(() => _dismissed = true);
+                },
+                child: const Text('Fix', style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              IconButton(
+                icon: Icon(Icons.close, size: 18,
+                    color: theme.colorScheme.onErrorContainer),
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Dismiss',
+                onPressed: () => setState(() => _dismissed = true),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
