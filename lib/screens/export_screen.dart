@@ -1,6 +1,4 @@
 import 'dart:io';
-// ignore: avoid_web_libraries_in_flutter, deprecated_member_use
-import 'dart:html' as html show AnchorElement, Blob, Url;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +6,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
+
+import '../utils/csv_download_stub.dart'
+    if (dart.library.html) '../utils/csv_download_web.dart';
 
 import '../engine/resolution_engine.dart';
 import '../providers/custody_provider.dart';
@@ -62,12 +63,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
       final dateStr = DateFormat('yyyyMMdd').format(DateTime.now());
       final fileName = 'coplan_export_$dateStr.csv';
       if (kIsWeb) {
-        final blob = html.Blob([csv], 'text/csv');
-        final url = html.Url.createObjectUrlFromBlob(blob);
-        html.AnchorElement(href: url)
-          ..setAttribute('download', fileName)
-          ..click();
-        html.Url.revokeObjectUrl(url);
+        downloadCsvOnWeb(csv, fileName);
         setState(() => _resultPath = fileName);
       } else {
         final dir = await getApplicationDocumentsDirectory();
