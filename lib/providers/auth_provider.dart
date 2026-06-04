@@ -66,6 +66,26 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
     state = const AsyncData(AuthState.loggedOut);
   }
 
+  Future<void> requestPasswordReset(String email) async {
+    await pb.collection('users').requestPasswordReset(email);
+  }
+
+  Future<void> changePassword({
+    required String oldPassword,
+    required String newPassword,
+  }) async {
+    final userId = state.valueOrNull?.userId;
+    if (userId == null) throw Exception('Not logged in');
+    final email = pb.authStore.record?.data['email'] as String? ?? '';
+    await pb.collection('users').update(userId, body: {
+      'oldPassword':     oldPassword,
+      'password':        newPassword,
+      'passwordConfirm': newPassword,
+    });
+    // Re-authenticate so the auth token stays valid after the password change.
+    if (email.isNotEmpty) await login(email, newPassword);
+  }
+
   /// Register a new user account and log in immediately.
   Future<void> register({
     required String email,
