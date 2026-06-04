@@ -9,6 +9,7 @@ class CoplanWidgetReceiver : GlanceAppWidgetReceiver() {
     override fun onEnabled(context: Context) {
         super.onEnabled(context)
         CoplanSyncWorker.schedule(context)
+        CoplanSyncWorker.runOnce(context)
     }
 
     override fun onDisabled(context: Context) {
@@ -23,6 +24,7 @@ class CoplanWidget2Receiver : GlanceAppWidgetReceiver() {
     override fun onEnabled(context: Context) {
         super.onEnabled(context)
         CoplanSyncWorker.schedule(context)
+        CoplanSyncWorker.runOnce(context)
     }
 }
 
@@ -32,5 +34,6 @@ class CoplanWidget3Receiver : GlanceAppWidgetReceiver() {
     override fun onEnabled(context: Context) {
         super.onEnabled(context)
         CoplanSyncWorker.schedule(context)
+        CoplanSyncWorker.runOnce(context)
     }
 }

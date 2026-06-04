@@ -612,5 +612,18 @@ class CoplanSyncWorker(
 
         fun cancel(context: Context) =
             WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
+
+        /** Trigger an immediate one-shot sync — use when a widget is first added. */
+        fun runOnce(context: Context) {
+            WorkManager.getInstance(context).enqueue(
+                OneTimeWorkRequestBuilder<CoplanSyncWorker>()
+                    .setConstraints(
+                        Constraints.Builder()
+                            .setRequiredNetworkType(NetworkType.CONNECTED)
+                            .build()
+                    )
+                    .build()
+            )
+        }
     }
 }
