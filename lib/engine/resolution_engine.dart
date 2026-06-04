@@ -367,7 +367,7 @@ class ResolutionEngine {
       ruleId:         rule.id,
       overrideId:     override?.id,
       custodyNote:    note,
-      isLogistics:    rule.isLogistics && note != null,
+      isLogistics:    rule.isLogistics,
     );
   }
 

@@ -273,8 +273,8 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
                 onChanged: (v) => setState(() => _isLogistics = v),
                 title: const Text('Logistics event'),
                 subtitle: const Text(
-                    'Greyed out when custody is with the other parent '
-                    '(e.g. school pickup, regular handover)'),
+                    'Always shown in grey — use for routine events implied '
+                    'by having the kids (e.g. school pickup, handover)'),
                 contentPadding: EdgeInsets.zero,
               ),
             const SizedBox(height: 16),
