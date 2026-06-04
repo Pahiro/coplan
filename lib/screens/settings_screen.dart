@@ -23,7 +23,7 @@ class SettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colorsAsync    = ref.watch(colorsProvider);
     final themeMode      = ref.watch(themeProvider).valueOrNull ?? ThemeMode.system;
-    final myName         = ref.watch(authProvider).valueOrNull?.userName ?? '';
+    final myUserId       = ref.watch(authProvider).valueOrNull?.userId ?? '';
     final household      = ref.watch(householdProvider).valueOrNull;
     final householdMode  = household?.mode ?? 'custody';
 
@@ -142,7 +142,7 @@ class SettingsScreen extends ConsumerWidget {
               label: m.displayName,
               description: "Shown on ${m.displayName}'s events and calendar blocks",
               current: colors.parentColor(m.displayName),
-              isEditable: myName == m.displayName,
+              isEditable: myUserId == m.userId,
               onChanged: (c) =>
                   ref.read(colorsProvider.notifier).updateMyColor(c),
             )),
@@ -151,7 +151,7 @@ class SettingsScreen extends ConsumerWidget {
                 label: m.displayName,
                 description: "Shown when ${m.displayName} is covering a pickup",
                 current: colors.parentColor(m.displayName),
-                isEditable: myName == m.displayName,
+                isEditable: myUserId == m.userId,
                 onChanged: (c) =>
                     ref.read(colorsProvider.notifier).updateMyColor(c),
               )),
