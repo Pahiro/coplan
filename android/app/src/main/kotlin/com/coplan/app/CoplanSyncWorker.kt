@@ -311,6 +311,39 @@ class CoplanSyncWorker(
 
     // ── Schedule resolution (mirrors Dart ResolutionEngine.resolveDay) ───────
 
+    /** Returns the custody-request parent who owns [time] on a given day, or null if none applies. */
+    private fun parentAtTime(time: String, custodyRequests: JSONArray): String? {
+        val parts  = time.split(":")
+        val timeMin = (parts[0].toIntOrNull() ?: 0) * 60 + (parts[1].toIntOrNull() ?: 0)
+        // Windows first (pickup ≤ time < return)
+        for (k in 0 until custodyRequests.length()) {
+            val r     = custodyRequests.getJSONObject(k)
+            val rt    = r.optString("return_time").takeIf { it.isNotEmpty() }
+            val rtTbd = r.optBoolean("return_time_tbd", false)
+            if (rt == null && !rtTbd) continue
+            val pParts    = r.optString("pickup_time", "00:00").split(":")
+            val pickupMin = (pParts[0].toIntOrNull() ?: 0) * 60 + (pParts[1].toIntOrNull() ?: 0)
+            val returnMin = if (rtTbd || rt == null) 24 * 60 else {
+                val rp = rt.split(":")
+                (rp[0].toIntOrNull() ?: 0) * 60 + (rp[1].toIntOrNull() ?: 0)
+            }
+            if (timeMin >= pickupMin && timeMin < returnMin)
+                return r.optString("to_parent").takeIf { it.isNotEmpty() }
+        }
+        // Then day transfers (time ≥ pickup)
+        for (k in 0 until custodyRequests.length()) {
+            val r     = custodyRequests.getJSONObject(k)
+            val rt    = r.optString("return_time").takeIf { it.isNotEmpty() }
+            val rtTbd = r.optBoolean("return_time_tbd", false)
+            if (rt != null || rtTbd) continue
+            val pParts    = r.optString("pickup_time", "00:00").split(":")
+            val pickupMin = (pParts[0].toIntOrNull() ?: 0) * 60 + (pParts[1].toIntOrNull() ?: 0)
+            if (timeMin >= pickupMin)
+                return r.optString("to_parent").takeIf { it.isNotEmpty() }
+        }
+        return null
+    }
+
     private fun resolveDay(
         date: LocalDate,
         rules: JSONArray,
@@ -353,44 +386,7 @@ class CoplanSyncWorker(
             }
 
             // Priority 4 — accepted custody (real + virtual recurring)
-            val eventMin = run {
-                val parts = time.split(":")
-                (parts[0].toIntOrNull() ?: 0) * 60 + (parts[1].toIntOrNull() ?: 0)
-            }
-            var custodyParent: String? = null
-            // Windows first (pickup ≤ event < return)
-            for (k in 0 until custodyRequests.length()) {
-                val r     = custodyRequests.getJSONObject(k)
-                val rt    = r.optString("return_time").takeIf { it.isNotEmpty() }
-                val rtTbd = r.optBoolean("return_time_tbd", false)
-                if (rt == null && !rtTbd) continue
-                val pParts    = r.optString("pickup_time", "00:00").split(":")
-                val pickupMin = (pParts[0].toIntOrNull() ?: 0) * 60 + (pParts[1].toIntOrNull() ?: 0)
-                val returnMin = if (rtTbd || rt == null) 24 * 60 else {
-                    val rp = rt.split(":")
-                    (rp[0].toIntOrNull() ?: 0) * 60 + (rp[1].toIntOrNull() ?: 0)
-                }
-                if (eventMin >= pickupMin && eventMin < returnMin) {
-                    custodyParent = r.optString("to_parent").takeIf { it.isNotEmpty() }
-                    break
-                }
-            }
-            // Then day transfers (event ≥ pickup → to_parent takes over)
-            if (custodyParent == null) {
-                for (k in 0 until custodyRequests.length()) {
-                    val r     = custodyRequests.getJSONObject(k)
-                    val rt    = r.optString("return_time").takeIf { it.isNotEmpty() }
-                    val rtTbd = r.optBoolean("return_time_tbd", false)
-                    if (rt != null || rtTbd) continue
-                    val pParts    = r.optString("pickup_time", "00:00").split(":")
-                    val pickupMin = (pParts[0].toIntOrNull() ?: 0) * 60 + (pParts[1].toIntOrNull() ?: 0)
-                    if (eventMin >= pickupMin) {
-                        custodyParent = r.optString("to_parent").takeIf { it.isNotEmpty() }
-                        break
-                    }
-                }
-            }
-            val finalParent = custodyParent ?: parent!!
+            val finalParent = parentAtTime(time, custodyRequests) ?: parent!!
 
             results += JSONObject().apply {
                 put("date",             date.format(DateTimeFormatter.ISO_LOCAL_DATE))
@@ -410,13 +406,17 @@ class CoplanSyncWorker(
             val isAdhoc = ov.optBoolean("is_adhoc", false) || reason.isNotEmpty()
             if (!isAdhoc) continue
 
-            val parent = ov.optString("assigned_parent").takeIf { it.isNotEmpty() }
+            val rawParent = ov.optString("assigned_parent").takeIf { it.isNotEmpty() }
                 ?: baseOwner(date, cfg, weekdayRules)
             val activity = ov.optString("activity").ifEmpty { reason }
+            val time     = ov.optString("override_time", "09:00")
+
+            // Apply the same custody-request override that rule-based events use.
+            val parent = parentAtTime(time, custodyRequests) ?: rawParent
 
             results += JSONObject().apply {
                 put("date",             date.format(DateTimeFormatter.ISO_LOCAL_DATE))
-                put("time",             ov.optString("override_time", "09:00"))
+                put("time",             time)
                 put("activity",         activity)
                 put("location",         ov.optString("location", ""))
                 put("childName",        ov.optString("child_name", "All"))
