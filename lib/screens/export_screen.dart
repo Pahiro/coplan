@@ -1,5 +1,8 @@
 import 'dart:io';
+// ignore: avoid_web_libraries_in_flutter, deprecated_member_use
+import 'dart:html' as html show AnchorElement, Blob, Url;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -56,11 +59,22 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
 
     try {
       final csv = await _generateCsv();
-      final dir = await getApplicationDocumentsDirectory();
       final dateStr = DateFormat('yyyyMMdd').format(DateTime.now());
-      final file = File('${dir.path}/coplan_export_$dateStr.csv');
-      await file.writeAsString(csv);
-      setState(() => _resultPath = file.path);
+      final fileName = 'coplan_export_$dateStr.csv';
+      if (kIsWeb) {
+        final blob = html.Blob([csv], 'text/csv');
+        final url = html.Url.createObjectUrlFromBlob(blob);
+        html.AnchorElement(href: url)
+          ..setAttribute('download', fileName)
+          ..click();
+        html.Url.revokeObjectUrl(url);
+        setState(() => _resultPath = fileName);
+      } else {
+        final dir = await getApplicationDocumentsDirectory();
+        final file = File('${dir.path}/$fileName');
+        await file.writeAsString(csv);
+        setState(() => _resultPath = file.path);
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -235,21 +249,24 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        _resultPath!,
+                        kIsWeb ? _resultPath! : _resultPath!,
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
-                      const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                        onPressed: () {
-                          Clipboard.setData(ClipboardData(text: _resultPath!));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text('Path copied to clipboard')),
-                          );
-                        },
-                        icon: const Icon(Icons.copy, size: 16),
-                        label: const Text('Copy path'),
-                      ),
+                      if (!kIsWeb) ...[
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            Clipboard.setData(
+                                ClipboardData(text: _resultPath!));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text('Path copied to clipboard')),
+                            );
+                          },
+                          icon: const Icon(Icons.copy, size: 16),
+                          label: const Text('Copy path'),
+                        ),
+                      ],
                     ],
                   ),
                 ),
