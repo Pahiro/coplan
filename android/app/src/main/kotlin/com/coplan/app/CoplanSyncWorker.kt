@@ -115,10 +115,10 @@ class CoplanSyncWorker(
                 // like the Dart engine's effectiveCustodyFor().
                 val custody = JSONArray()
                 for (k in 0 until realCustody.length()) custody.put(realCustody.getJSONObject(k))
-                for (v in virtualRecurring(date, cfg, recurring, weekdayRules, realCustody)) {
+                val dayAbsences = absencesForDate(date, allAbsences)
+                for (v in virtualRecurring(date, cfg, recurring, weekdayRules, realCustody, dayAbsences)) {
                     custody.put(v)
                 }
-                val dayAbsences = absencesForDate(date, allAbsences)
                 allEvents += resolveDay(date, rules, overrides, weekdayRules, cfg, custody, dayAbsences)
             }
 
@@ -256,7 +256,8 @@ class CoplanSyncWorker(
 
     private fun virtualRecurring(
         date: LocalDate, cfg: Cfg, recurring: JSONArray,
-        weekdayRules: JSONArray, realCustody: JSONArray
+        weekdayRules: JSONArray, realCustody: JSONArray,
+        dayAbsences: JSONArray = JSONArray(),
     ): List<JSONObject> {
         if (date.isBefore(LocalDate.now())) return emptyList()
         val dow  = date.dayOfWeek.value
@@ -270,6 +271,7 @@ class CoplanSyncWorker(
             if (date.isBefore(start)) continue
             val toParent = a.optString("to_parent").takeIf { it.isNotEmpty() } ?: continue
             if (base == toParent) continue   // recipient already owns the day
+            if (isAbsent(toParent, date, dayAbsences)) continue  // absent — can't take kids
 
             val child = a.optString("child_name", "All")
             var covered = false
@@ -304,6 +306,14 @@ class CoplanSyncWorker(
             if (!date.isBefore(start) && !date.isAfter(end)) out.put(a)
         }
         return out
+    }
+
+    /** True when [parent] has an active absence on this day. */
+    private fun isAbsent(parent: String, date: LocalDate, dayAbsences: JSONArray): Boolean {
+        for (i in 0 until dayAbsences.length()) {
+            if (dayAbsences.getJSONObject(i).optString("absent_parent") == parent) return true
+        }
+        return false
     }
 
     /** If [scheduled] is absent on this day, flip to the other rotation parent. */

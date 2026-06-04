@@ -166,6 +166,9 @@ class ResolutionEngine {
       if (d.isBefore(start)) continue;
       // Conditional: skip weeks where the recipient already owns the day.
       if (dayBaseOwner == a.toParent) continue;
+      // Suppress when the recipient is absent — they can't take the kids.
+      final absence = absenceFor(date);
+      if (absence != null && absence.absentParent == a.toParent) continue;
       // Suppress when a one-off request already covers this date + child.
       final covered = realForDate.any((r) =>
           r.childName == a.childName ||
