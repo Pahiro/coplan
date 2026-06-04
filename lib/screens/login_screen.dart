@@ -30,6 +30,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _loadSavedUrl() async {
     final prefs = await SharedPreferences.getInstance();
     _urlCtrl.text = getSavedPbUrl(prefs);
+    _emailCtrl.text = prefs.getString('last_email') ?? '';
   }
 
   @override
@@ -50,9 +51,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await setPocketBaseUrl(newUrl, prefs);
     }
 
+    final email = _emailCtrl.text.trim();
+    await prefs.setString('last_email', email);
     await ref
         .read(authProvider.notifier)
-        .login(_emailCtrl.text.trim(), _passCtrl.text);
+        .login(email, _passCtrl.text);
   }
 
   Future<void> _forgotPassword(BuildContext context) async {
