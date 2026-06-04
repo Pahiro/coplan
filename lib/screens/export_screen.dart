@@ -10,8 +10,11 @@ import 'package:path_provider/path_provider.dart';
 import '../utils/csv_download_stub.dart'
     if (dart.library.html) '../utils/csv_download_web.dart';
 
+import '../core/pb_client.dart';
 import '../engine/resolution_engine.dart';
-import '../providers/custody_provider.dart';
+import '../models/custody_request.dart';
+import '../models/manual_override.dart';
+import '../providers/absence_provider.dart';
 import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 
@@ -82,6 +85,9 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     }
   }
 
+  String _fmtDate(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
   Future<String> _generateCsv() async {
     final household = ref.read(householdProvider).valueOrNull;
     final anchor = household?.rotationAnchorDate ?? DateTime(2025, 1, 6);
@@ -94,17 +100,31 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     final weekdayRules = ref.read(weekdayRulesProvider).valueOrNull ?? const [];
     final recurring =
         ref.read(recurringArrangementsProvider).valueOrNull ?? const [];
-    final allCustody = ref.read(custodyRequestsProvider).valueOrNull ?? const [];
-    final acceptedCustody =
-        allCustody.where((r) => r.isAccepted).toList();
-
-    final buf = StringBuffer();
-    // CSV header
-    buf.writeln(
-        'Date,Weekday,Day Owner,Time,Activity,Child,Location,Parent,Type,Shared');
+    final allAbsences =
+        ref.read(absencePeriodsProvider).valueOrNull ?? const [];
 
     final start = _range!.start;
     final end = _range!.end;
+    final startStr = _fmtDate(start);
+    final endStr = _fmtDate(end);
+
+    final overrideRecords = await pb.collection('manual_overrides').getFullList(
+        filter: 'target_date >= "$startStr" && target_date <= "$endStr"');
+    final allOverrides = overrideRecords
+        .map((r) => ManualOverride.fromRecord(r.toJson()))
+        .toList();
+
+    final custodyRecords = await pb.collection('custody_requests').getFullList(
+        filter:
+            'date >= "$startStr" && date <= "$endStr" && status = "accepted"');
+    final allCustody = custodyRecords
+        .map((r) => CustodyRequest.fromRecord(r.toJson()))
+        .toList();
+
+    final buf = StringBuffer();
+    buf.writeln(
+        'Date,Weekday,Day Owner,Time,Activity,Child,Location,Parent,Type,Shared');
+
     final days = end.difference(start).inDays + 1;
     final fmt = DateFormat('yyyy-MM-dd');
     final dayFmt = DateFormat('EEEE');
@@ -114,12 +134,28 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
       final dateStr = fmt.format(date);
       final weekday = dayFmt.format(date);
 
+      final dayOverrides = allOverrides
+          .where((o) =>
+              o.targetDate.year == date.year &&
+              o.targetDate.month == date.month &&
+              o.targetDate.day == date.day)
+          .toList();
+      final dayCustody = allCustody
+          .where((r) =>
+              r.date.year == date.year &&
+              r.date.month == date.month &&
+              r.date.day == date.day)
+          .toList();
+      final dayAbsences =
+          allAbsences.where((a) => a.coversDate(date)).toList();
+
       final engine = ResolutionEngine(
         baseRules: rules,
-        overrides: const [],
-        custodyRequests: acceptedCustody,
+        overrides: dayOverrides,
+        custodyRequests: dayCustody,
         weekdayRules: weekdayRules,
         recurringArrangements: recurring,
+        absencePeriods: dayAbsences,
         rotationAnchor: anchor,
         rotationParentEven: evenName,
         rotationParentOdd: oddName,

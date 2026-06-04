@@ -247,20 +247,27 @@ class ResolutionEngine {
     // Ad-hoc one-off events
     final adhoc = overrides
         .where((o) => _sameDay(o.targetDate, date) && o.isAdhoc)
-        .map((o) => ResolvedEvent(
-              date:           date,
-              time:           _parseTime(o.overrideTime ?? '09:00'),
-              endTime:        o.endTime != null && o.endTime!.isNotEmpty
-                                  ? _parseTime(o.endTime!) : null,
-              activity:       o.adhocActivity ?? '',
-              location:       o.adhocLocation ?? '',
-              childName:      o.childName,
-              assignedParent: o.assignedParent,
-              note:           o.note,
-              isAdhoc:        true,
-              isShared:       o.isShared,
-              overrideId:     o.id,
-            ))
+        .map((o) {
+          final t = _parseTime(o.overrideTime ?? '09:00');
+          final custodyNote = _custodyNoteAt(date, t);
+          final actualParent =
+              custodyNote != null ? parentAtTime(date, t) : o.assignedParent;
+          return ResolvedEvent(
+            date:           date,
+            time:           t,
+            endTime:        o.endTime != null && o.endTime!.isNotEmpty
+                                ? _parseTime(o.endTime!) : null,
+            activity:       o.adhocActivity ?? '',
+            location:       o.adhocLocation ?? '',
+            childName:      o.childName,
+            assignedParent: actualParent,
+            note:           o.note,
+            isAdhoc:        true,
+            isShared:       o.isShared,
+            overrideId:     o.id,
+            custodyNote:    custodyNote,
+          );
+        })
         .toList();
 
     // Accepted custody — real records plus virtual recurring occurrences —
