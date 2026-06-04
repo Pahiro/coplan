@@ -286,7 +286,6 @@ class _JoinHouseholdPanelState extends ConsumerState<_JoinHouseholdPanel> {
     setState(() { _saving = true; _error = null; });
     try {
       await ref.read(householdProvider.notifier).acceptInvite(code);
-      if (mounted) ref.invalidate(authProvider);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {

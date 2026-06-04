@@ -239,6 +239,12 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
       body: {'code': code.trim().toUpperCase()},
     );
 
+    // Refresh the auth store so pb.authStore.record has the updated
+    // active_household — without this the authProvider rebuilds with stale
+    // data and needsHousehold stays true, keeping the user on the setup screen.
+    await pb.collection('users').authRefresh();
+
+    ref.invalidate(authProvider);
     ref.invalidateSelf();
   }
 
