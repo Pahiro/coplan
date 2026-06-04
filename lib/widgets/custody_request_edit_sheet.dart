@@ -7,6 +7,7 @@ import '../models/custody_request.dart';
 import '../models/recurring_arrangement.dart';
 import '../models/weekday_rule.dart';
 import '../providers/custody_provider.dart';
+import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 
 /// Full edit form for an existing [CustodyRequest].
@@ -23,8 +24,8 @@ class CustodyRequestEditSheet extends ConsumerStatefulWidget {
 
 class _CustodyRequestEditSheetState
     extends ConsumerState<CustodyRequestEditSheet> {
-  late DateTime  _date;
-  late String    _child;
+  late DateTime     _date;
+  late Set<String>  _selectedChildren; // empty = "All"
   late TimeOfDay _pickupTime;
   late bool      _hasReturnTime;
   late TimeOfDay? _returnTime;
@@ -40,7 +41,7 @@ class _CustodyRequestEditSheetState
     super.initState();
     final r = widget.request;
     _date             = r.date;
-    _child            = r.childName;
+    _selectedChildren = _parseChildName(r.childName);
     _pickupTime       = _parseTime(r.pickupTime);
     _hasReturnTime    = !r.isDayTransfer;
     _returnTimeTbd    = r.returnTimeTbd;
@@ -63,6 +64,14 @@ class _CustodyRequestEditSheetState
     _noteCtrl.dispose();
     super.dispose();
   }
+
+  /// "All" or empty → empty set; "Henri,Chris" → {"Henri","Chris"}.
+  static Set<String> _parseChildName(String v) =>
+      (v == 'All' || v.isEmpty) ? {} : v.split(',').map((s) => s.trim()).toSet();
+
+  /// Empty set → "All"; otherwise comma-joined sorted names.
+  static String _encodeChildName(Set<String> s, List<String> allNames) =>
+      s.isEmpty || s.length == allNames.length ? 'All' : s.toList().join(',');
 
   TimeOfDay _parseTime(String hhmm) {
     final p = hhmm.split(':');
@@ -97,10 +106,12 @@ class _CustodyRequestEditSheetState
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
+      final allChildNames =
+          (ref.read(householdChildNamesProvider)).map((c) => c.name).toList();
       await ref.read(custodyRequestsProvider.notifier).updateRequest(
             widget.request.id,
             date:             _isoDate(_date),
-            childName:        _child,
+            childName:        _encodeChildName(_selectedChildren, allChildNames),
             pickupTime:       _fmtTime(_pickupTime),
             returnTime:       (_hasReturnTime && !_returnTimeTbd)
                 ? _fmtTime(_returnTime)
@@ -128,7 +139,7 @@ class _CustodyRequestEditSheetState
           await recurring.upsert(
             dayOfWeek:        _date.weekday,
             toParent:         widget.request.toParent,
-            childName:        _child,
+            childName:        _encodeChildName(_selectedChildren, allChildNames),
             pickupTime:       _fmtTime(_pickupTime),
             returnTime:       null,
             returnTimeTbd:    false,
@@ -189,17 +200,10 @@ class _CustodyRequestEditSheetState
             ),
             const SizedBox(height: 12),
 
-            // Child
-            DropdownButtonFormField<String>(
-              value: _child,
-              decoration: const InputDecoration(
-                  labelText: 'Child', border: OutlineInputBorder()),
-              items: const [
-                DropdownMenuItem(value: 'All',   child: Text('Both — Henri & Chris')),
-                DropdownMenuItem(value: 'Henri', child: Text('Henri')),
-                DropdownMenuItem(value: 'Chris', child: Text('Chris')),
-              ],
-              onChanged: (v) => setState(() => _child = v ?? 'All'),
+            // Child — multi-select chips; none selected = All
+            _ChildChips(
+              selected: _selectedChildren,
+              onChanged: (s) => setState(() => _selectedChildren = s),
             ),
             const SizedBox(height: 12),
 
@@ -369,4 +373,51 @@ class CustodyEditTransportRow extends StatelessWidget {
           ),
         ],
       );
+}
+
+/// Multi-select chip row for choosing which children a custody request covers.
+/// An empty [selected] set means "All children".
+class _ChildChips extends ConsumerWidget {
+  final Set<String> selected;
+  final ValueChanged<Set<String>> onChanged;
+  const _ChildChips({required this.selected, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final children = ref.watch(householdChildNamesProvider);
+    if (children.isEmpty) return const SizedBox.shrink();
+
+    final allSelected = selected.isEmpty || selected.length == children.length;
+    return InputDecorator(
+      decoration: const InputDecoration(
+        labelText: 'Children',
+        border: OutlineInputBorder(),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      ),
+      child: Wrap(
+        spacing: 8,
+        children: [
+          FilterChip(
+            label: const Text('All'),
+            selected: allSelected,
+            onSelected: (_) => onChanged({}),
+          ),
+          ...children.map((c) => FilterChip(
+                label: Text(c.name),
+                selected: !allSelected && selected.contains(c.name),
+                onSelected: (on) {
+                  final next = Set<String>.from(selected);
+                  if (on) {
+                    next.add(c.name);
+                  } else {
+                    next.remove(c.name);
+                  }
+                  // If all individually selected, collapse back to "All"
+                  onChanged(next.length == children.length ? {} : next);
+                },
+              )),
+        ],
+      ),
+    );
+  }
 }

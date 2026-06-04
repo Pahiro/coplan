@@ -273,9 +273,10 @@ class ResolutionEngine {
     // Accepted custody — real records plus virtual recurring occurrences —
     // appear as banner events (day transfers and windows alike).
     final custodyEvents = effectiveCustodyFor(date).map((r) {
+      final who = _custodyChildLabel(r.childName);
       final label = r.isDayTransfer
-          ? '${r.toParent} has ${r.childName}'
-          : '${r.toParent} has ${r.childName} · ${r.timeWindowLabel}';
+          ? '$who in ${r.toParent}\'s care'
+          : '$who in ${r.toParent}\'s care · ${r.timeWindowLabel}';
       final recurringId = RecurringArrangement.recurringIdFrom(r.id);
       return ResolvedEvent(
         date:                  date,
@@ -424,5 +425,13 @@ class ResolutionEngine {
   TimeOfDay _parseTime(String hhmm) {
     final p = hhmm.split(':');
     return TimeOfDay(hour: int.parse(p[0]), minute: int.parse(p[1]));
+  }
+
+  /// "All" → "All", "Henri" → "Henri", "Henri,Chris" → "Henri & Chris".
+  static String _custodyChildLabel(String childName) {
+    if (childName == 'All') return 'All';
+    final parts = childName.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+    if (parts.length <= 1) return childName;
+    return '${parts.sublist(0, parts.length - 1).join(', ')} & ${parts.last}';
   }
 }

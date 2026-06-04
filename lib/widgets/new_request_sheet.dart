@@ -16,7 +16,7 @@ class NewRequestSheet extends ConsumerStatefulWidget {
 class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
   // ── State ───────────────────────────────────────────────────────────────────
   DateTime _date    = DateTime.now();
-  String   _child   = 'All';
+  Set<String> _selectedChildren = {}; // empty = All
   bool     _sending = false;
 
   String     _recipientKey     = '__parent__';
@@ -95,7 +95,7 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
       await ref.read(custodyRequestsProvider.notifier).createRequest(
             iAmTaking:        _iAmTaking,
             date:             _isoDate(_date),
-            childName:        _child,
+            childName:        _encodeChildName(_selectedChildren),
             pickupTime:       _fmtTime(_pickupTime),
             returnTime:       (_hasReturnTime && !_returnTimeTbd)
                                   ? _fmtTime(_returnTime) : null,
@@ -226,9 +226,9 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
             const SizedBox(height: 12),
 
             // Child
-            _ChildSelector(
-                value: _child,
-                onChanged: (v) => setState(() => _child = v)),
+            _ChildChips(
+                selected: _selectedChildren,
+                onChanged: (s) => setState(() => _selectedChildren = s)),
             const SizedBox(height: 12),
 
             // Pickup time
@@ -420,26 +420,49 @@ class _TimePickerField extends StatelessWidget {
       );
 }
 
-class _ChildSelector extends ConsumerWidget {
-  final String value;
-  final ValueChanged<String> onChanged;
-  const _ChildSelector({required this.value, required this.onChanged});
+String _encodeChildName(Set<String> s) =>
+    s.isEmpty ? 'All' : s.toList().join(',');
+
+class _ChildChips extends ConsumerWidget {
+  final Set<String> selected;
+  final ValueChanged<Set<String>> onChanged;
+  const _ChildChips({required this.selected, required this.onChanged});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final children = ref.watch(householdChildNamesProvider);
-    final items = ['All', ...children.map((c) => c.name)];
-    return DropdownButtonFormField<String>(
-      value: items.contains(value) ? value : 'All',
+    if (children.isEmpty) return const SizedBox.shrink();
+
+    final allSelected = selected.isEmpty || selected.length == children.length;
+    return InputDecorator(
       decoration: const InputDecoration(
-          labelText: 'Child', border: OutlineInputBorder()),
-      items: items
-          .map((name) => DropdownMenuItem(
-                value: name,
-                child: Text(name == 'All' ? 'All children' : name),
-              ))
-          .toList(),
-      onChanged: (v) => onChanged(v ?? 'All'),
+        labelText: 'Children',
+        border: OutlineInputBorder(),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      ),
+      child: Wrap(
+        spacing: 8,
+        children: [
+          FilterChip(
+            label: const Text('All'),
+            selected: allSelected,
+            onSelected: (_) => onChanged({}),
+          ),
+          ...children.map((c) => FilterChip(
+                label: Text(c.name),
+                selected: !allSelected && selected.contains(c.name),
+                onSelected: (on) {
+                  final next = Set<String>.from(selected);
+                  if (on) {
+                    next.add(c.name);
+                  } else {
+                    next.remove(c.name);
+                  }
+                  onChanged(next.length == children.length ? {} : next);
+                },
+              )),
+        ],
+      ),
     );
   }
 }

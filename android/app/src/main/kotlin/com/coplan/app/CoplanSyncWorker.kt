@@ -244,6 +244,14 @@ class CoplanSyncWorker(
     private fun colorFor(name: String, cfg: Cfg): Long =
         if (name == "Both") 0xFF7E57C2L else (cfg.colorByName[name] ?: 0xFF607D8BL)
 
+    /** "All" → "All", "Henri" → "Henri", "Henri,Chris" → "Henri & Chris". */
+    private fun custodyChildLabel(childName: String): String {
+        if (childName == "All") return "All"
+        val parts = childName.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.size <= 1) return childName
+        return "${parts.dropLast(1).joinToString(", ")} & ${parts.last()}"
+    }
+
     // ── Recurring expansion (mirrors Dart _virtualRecurringFor) ──────────────
 
     private fun virtualRecurring(
@@ -436,11 +444,12 @@ class CoplanSyncWorker(
             val returnTbd     = r.optBoolean("return_time_tbd", false)
             val isDayTransfer = returnTime == null && !returnTbd
 
+            val who   = custodyChildLabel(childName)
             val label = if (isDayTransfer)
-                "$toParent has $childName"
+                "$who in $toParent's care"
             else {
                 val end = if (returnTbd) "TBD" else (returnTime ?: "TBD")
-                "$toParent has $childName · $pickupTime–$end"
+                "$who in $toParent's care · $pickupTime–$end"
             }
 
             results += JSONObject().apply {
