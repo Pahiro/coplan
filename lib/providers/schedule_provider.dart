@@ -185,15 +185,17 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
     required String activity,
     required String location,
     required bool isShared,
+    bool isLogistics = false,
   }) async {
     final hid = ref.read(householdProvider).valueOrNull?.id;
     await pb.collection('rules_base').create(body: {
-      'child_name':  childName,
-      'day_of_week': dayOfWeek,
-      'event_time':  eventTime,
-      'activity':    activity,
-      'location':    location,
-      'is_shared':   isShared,
+      'child_name':   childName,
+      'day_of_week':  dayOfWeek,
+      'event_time':   eventTime,
+      'activity':     activity,
+      'location':     location,
+      'is_shared':    isShared,
+      'is_logistics': isLogistics,
       if (hid != null) 'household': hid,
     });
     _invalidate();
@@ -207,14 +209,16 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
     required String activity,
     required String location,
     required bool isShared,
+    bool isLogistics = false,
   }) async {
     await pb.collection('rules_base').update(id, body: {
-      'child_name':  childName,
-      'day_of_week': dayOfWeek,
-      'event_time':  eventTime,
-      'activity':    activity,
-      'location':    location,
-      'is_shared':   isShared,
+      'child_name':   childName,
+      'day_of_week':  dayOfWeek,
+      'event_time':   eventTime,
+      'activity':     activity,
+      'location':     location,
+      'is_shared':    isShared,
+      'is_logistics': isLogistics,
     });
     _invalidate();
   }

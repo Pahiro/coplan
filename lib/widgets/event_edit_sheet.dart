@@ -26,6 +26,7 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
   late TimeOfDay _time;
   TimeOfDay?    _endTime;
   late bool     _isShared;
+  late bool     _isLogistics;
   late DateTime _date;      // only for adhoc/create-rule (date picker)
   late int      _dayOfWeek; // only for base rules (day picker)
   bool _saving = false;
@@ -45,6 +46,7 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
     _time         = e?.time ?? const TimeOfDay(hour: 14, minute: 30);
     _endTime      = e?.endTime;
     _isShared     = e?.isShared ?? false;
+    _isLogistics  = e?.isLogistics ?? false;
     _date         = e?.date ?? DateTime.now().add(const Duration(days: 1));
     _dayOfWeek    = e?.date.weekday ?? DateTime.monday;
   }
@@ -104,22 +106,24 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
       } else if (_isEditRule) {
         await ref.read(baseRulesNotifierProvider.notifier).updateRule(
               widget.event!.ruleId!,
-              childName:  _child,
-              dayOfWeek:  _dayOfWeek,
-              eventTime:  _fmtTime(_time),
-              activity:   _activityCtrl.text.trim(),
-              location:   _locationCtrl.text.trim(),
-              isShared:   _isShared,
+              childName:   _child,
+              dayOfWeek:   _dayOfWeek,
+              eventTime:   _fmtTime(_time),
+              activity:    _activityCtrl.text.trim(),
+              location:    _locationCtrl.text.trim(),
+              isShared:    _isShared,
+              isLogistics: _isLogistics,
             );
       } else {
         // Create new standing rule
         await ref.read(baseRulesNotifierProvider.notifier).create(
-              childName:  _child,
-              dayOfWeek:  _dayOfWeek,
-              eventTime:  _fmtTime(_time),
-              activity:   _activityCtrl.text.trim(),
-              location:   _locationCtrl.text.trim(),
-              isShared:   _isShared,
+              childName:   _child,
+              dayOfWeek:   _dayOfWeek,
+              eventTime:   _fmtTime(_time),
+              activity:    _activityCtrl.text.trim(),
+              location:    _locationCtrl.text.trim(),
+              isShared:    _isShared,
+              isLogistics: _isLogistics,
             );
       }
       if (mounted) Navigator.pop(context);
@@ -262,6 +266,17 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
               subtitle: const Text('Both parents always see this event'),
               contentPadding: EdgeInsets.zero,
             ),
+            // Logistics toggle — only meaningful for standing rules
+            if (!_isEditOverride)
+              SwitchListTile(
+                value: _isLogistics,
+                onChanged: (v) => setState(() => _isLogistics = v),
+                title: const Text('Logistics event'),
+                subtitle: const Text(
+                    'Greyed out when custody is with the other parent '
+                    '(e.g. school pickup, regular handover)'),
+                contentPadding: EdgeInsets.zero,
+              ),
             const SizedBox(height: 16),
 
             SizedBox(

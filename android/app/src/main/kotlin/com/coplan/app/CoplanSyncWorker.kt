@@ -276,8 +276,12 @@ class CoplanSyncWorker(
             val child = a.optString("child_name", "All")
             var covered = false
             for (k in 0 until realCustody.length()) {
-                val c = realCustody.getJSONObject(k).optString("child_name", "All")
-                if (c == child || c == "All" || child == "All") { covered = true; break }
+                val r = realCustody.getJSONObject(k)
+                val c = r.optString("child_name", "All")
+                val sameRecipient = r.optString("to_parent") == toParent
+                if (sameRecipient && (c == child || c == "All" || child == "All")) {
+                    covered = true; break
+                }
             }
             if (covered) continue
 

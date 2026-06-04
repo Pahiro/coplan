@@ -169,11 +169,13 @@ class ResolutionEngine {
       // Suppress when the recipient is absent — they can't take the kids.
       final absence = absenceFor(date);
       if (absence != null && absence.absentParent == a.toParent) continue;
-      // Suppress when a one-off request already covers this date + child.
+      // Suppress when a one-off request for the same recipient already covers
+      // this date + child (e.g. early drop-off replaces the weekly handover).
       final covered = realForDate.any((r) =>
-          r.childName == a.childName ||
-          r.childName == 'All' ||
-          a.childName == 'All');
+          r.toParent == a.toParent &&
+          (r.childName == a.childName ||
+           r.childName == 'All' ||
+           a.childName == 'All'));
       if (covered) continue;
       out.add(a.toVirtualRequest(date, fromParent: dayBaseOwner));
     }
@@ -365,6 +367,7 @@ class ResolutionEngine {
       ruleId:         rule.id,
       overrideId:     override?.id,
       custodyNote:    note,
+      isLogistics:    rule.isLogistics && note != null,
     );
   }
 

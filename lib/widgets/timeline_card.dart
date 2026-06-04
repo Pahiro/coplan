@@ -24,13 +24,15 @@ class TimelineCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
     final parent = event.assignedParent;
-    final parentColor = colors.parentColor(parent);
-    final parentLight = colors.parentLightColor(parent);
-    // Flag when the responsible person is a helper (not a parent) so the card
-    // makes clear neither parent is covering.
     final household = ref.watch(householdProvider).valueOrNull;
     final isHelper =
         household?.helpers.any((h) => h.displayName == parent) ?? false;
+
+    // Logistics events (school pickup etc.) are greyed out when a custody
+    // override has changed who has the kids — still visible but de-emphasised.
+    final isGreyed = event.isLogistics;
+    final parentColor = isGreyed ? Colors.grey.shade400 : colors.parentColor(parent);
+    final parentLight = isGreyed ? Colors.grey.shade100 : colors.parentLightColor(parent);
 
     final timeStr =
         '${event.time.hour.toString().padLeft(2, '0')}:${event.time.minute.toString().padLeft(2, '0')}';

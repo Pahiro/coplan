@@ -62,6 +62,11 @@ class ResolvedEvent {
   /// [custodyRequestId] instead.
   final String? recurringId;
 
+  /// True when this event comes from a rule marked is_logistics AND a custody
+  /// request has changed the responsible parent. Rendered greyed-out in the UI
+  /// so it doesn't clutter the view but still provides schedule context.
+  final bool isLogistics;
+
   const ResolvedEvent({
     required this.date,
     required this.time,
@@ -80,6 +85,7 @@ class ResolvedEvent {
     this.custodyRequestId,
     this.custodyTransportNote,
     this.recurringId,
+    this.isLogistics = false,
   });
 
   /// Serialised form written to SharedPreferences for the Android widget.

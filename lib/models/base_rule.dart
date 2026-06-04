@@ -12,6 +12,10 @@ class BaseRule {
   /// but the event is tagged so both parents can see it is a shared obligation.
   final bool isShared;
 
+  /// Logistics events (school pickup, regular handover) are greyed out in the
+  /// UI when a custody override has changed who has the kids that day.
+  final bool isLogistics;
+
   const BaseRule({
     required this.id,
     required this.childName,
@@ -20,6 +24,7 @@ class BaseRule {
     required this.location,
     required this.activity,
     this.isShared = false,
+    this.isLogistics = false,
   });
 
   factory BaseRule.fromRecord(Map<String, dynamic> j) => BaseRule(
@@ -30,5 +35,6 @@ class BaseRule {
         location: j['location'] as String,
         activity: j['activity'] as String,
         isShared: (j['is_shared'] as bool?) ?? false,
+        isLogistics: (j['is_logistics'] as bool?) ?? false,
       );
 }
