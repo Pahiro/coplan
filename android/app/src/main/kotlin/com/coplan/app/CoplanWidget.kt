@@ -110,7 +110,9 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
 
     @Composable
     private fun Style1Row(event: WidgetEvent) {
-        val accent = accentColor(event.parent)
+        val accent    = if (event.isLogistics) Color(0xFF616161) else accentColor(event.parent)
+        val textColor = if (event.isLogistics) Color(0xFF757575) else Color(0xFFEEEEEE)
+        val subColor  = Color(0xFF757575)
         Row(
             modifier = GlanceModifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -141,7 +143,7 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
                     Text(
                         event.dayAbbr,
                         style = TextStyle(
-                            color = ColorProvider(Color(0xFF9E9E9E)),
+                            color = ColorProvider(subColor),
                             fontSize = 9.sp
                         )
                     )
@@ -154,7 +156,7 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
                     event.activity,
                     maxLines = 1,
                     style = TextStyle(
-                        color = ColorProvider(Color(0xFFEEEEEE)),
+                        color = ColorProvider(textColor),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -165,7 +167,7 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
                         sub,
                         maxLines = 1,
                         style = TextStyle(
-                            color = ColorProvider(Color(0xFF9E9E9E)),
+                            color = ColorProvider(subColor),
                             fontSize = 10.sp
                         )
                     )
@@ -214,9 +216,12 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
     @Composable
     private fun Style2Row(event: WidgetEvent) {
         val isBennet  = event.parent == "Bennet"
-        val baseColor = if (isBennet) Color(0xFF1565C0) else Color(0xFFD81B60)
+        val baseColor = if (event.isLogistics) Color(0xFF424242)
+                        else if (isBennet) Color(0xFF1565C0) else Color(0xFFD81B60)
         val tokenBg   = baseColor.copy(alpha = 0.20f)
-        val tokenText = if (isBennet) Color(0xFF90CAF9) else Color(0xFFF48FB1)
+        val tokenText = if (event.isLogistics) Color(0xFF757575)
+                        else if (isBennet) Color(0xFF90CAF9) else Color(0xFFF48FB1)
+        val textColor = if (event.isLogistics) Color(0xFF757575) else Color(0xFFEEEEEE)
 
         Row(
             modifier = GlanceModifier.fillMaxWidth().padding(vertical = 6.dp),
@@ -257,7 +262,7 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
                     event.activity,
                     maxLines = 1,
                     style = TextStyle(
-                        color = ColorProvider(Color(0xFFEEEEEE)),
+                        color = ColorProvider(textColor),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -310,7 +315,8 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
 
     @Composable
     private fun Style3Row(event: WidgetEvent, showLine: Boolean) {
-        val accent = accentColor(event.parent)
+        val accent    = if (event.isLogistics) Color(0xFF616161) else accentColor(event.parent)
+        val textColor = if (event.isLogistics) Color(0xFF757575) else null
         Row(
             modifier = GlanceModifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -369,7 +375,8 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
                     event.activity,
                     maxLines = 1,
                     style = TextStyle(
-                        color = GlanceTheme.colors.onSurface,
+                        color = if (textColor != null) ColorProvider(textColor)
+                                else GlanceTheme.colors.onSurface,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -412,12 +419,13 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
                 }.getOrElse { "" }
 
                 WidgetEvent(
-                    dayAbbr   = dayAbbr,
-                    time      = o.optString("time", ""),
-                    activity  = o.optString("activity", ""),
-                    location  = o.optString("location", ""),
-                    childName = o.optString("childName", ""),
-                    parent    = o.optString("parent", "")
+                    dayAbbr      = dayAbbr,
+                    time         = o.optString("time", ""),
+                    activity     = o.optString("activity", ""),
+                    location     = o.optString("location", ""),
+                    childName    = o.optString("childName", ""),
+                    parent       = o.optString("parent", ""),
+                    isLogistics  = o.optBoolean("isLogistics", false)
                 )
             }
         }.getOrElse { emptyList() }
@@ -429,5 +437,6 @@ data class WidgetEvent(
     val activity: String,
     val location: String,
     val childName: String,
-    val parent: String
+    val parent: String,
+    val isLogistics: Boolean = false
 )

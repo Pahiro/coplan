@@ -96,6 +96,7 @@ class ResolvedEvent {
         'location': location,
         'childName': childName,
         'parent': assignedParent,
+        'isLogistics': isLogistics,
       };
 
   String _p(int n) => n.toString().padLeft(2, '0');
