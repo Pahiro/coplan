@@ -35,7 +35,8 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
   TimeOfDay      _time     = const TimeOfDay(hour: 14, minute: 30);
   TimeOfDay?     _endTime;
   String         _child    = 'All';
-  bool           _isShared = false; // only used for standing events
+  bool           _isShared    = false; // only used for standing events
+  bool           _isLogistics = false; // only used for one-off events
   bool           _saving   = false;
 
   final _activityCtrl = TextEditingController();
@@ -122,6 +123,7 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
               assignedParent: owner,
               endTime:        _endTime != null ? _fmtTime(_endTime!) : null,
               note:           _noteCtrl.text.trim(),
+              isLogistics:    _isLogistics,
             );
       }
       if (mounted) Navigator.pop(context);
@@ -274,8 +276,16 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
                 subtitle: const Text('Marks it as a shared obligation'),
                 contentPadding: EdgeInsets.zero,
               ),
-            ] else
-              const SizedBox(height: 16),
+            ] else ...[
+              const SizedBox(height: 4),
+              SwitchListTile(
+                value: _isLogistics,
+                onChanged: (v) => setState(() => _isLogistics = v),
+                title: const Text('Logistics / transport'),
+                subtitle: const Text('Dims this event when a custody request already covers it'),
+                contentPadding: EdgeInsets.zero,
+              ),
+            ],
 
             SizedBox(
               width: double.infinity,

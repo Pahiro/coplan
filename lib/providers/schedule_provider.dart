@@ -186,16 +186,18 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
     required String location,
     required bool isShared,
     bool isLogistics = false,
+    String? handoverFrom,
   }) async {
     final hid = ref.read(householdProvider).valueOrNull?.id;
     await pb.collection('rules_base').create(body: {
-      'child_name':   childName,
-      'day_of_week':  dayOfWeek,
-      'event_time':   eventTime,
-      'activity':     activity,
-      'location':     location,
-      'is_shared':    isShared,
-      'is_logistics': isLogistics,
+      'child_name':    childName,
+      'day_of_week':   dayOfWeek,
+      'event_time':    eventTime,
+      'activity':      activity,
+      'location':      location,
+      'is_shared':     isShared,
+      'is_logistics':  isLogistics,
+      'handover_from': handoverFrom ?? '',
       if (hid != null) 'household': hid,
     });
     _invalidate();
@@ -210,15 +212,17 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
     required String location,
     required bool isShared,
     bool isLogistics = false,
+    String? handoverFrom,
   }) async {
     await pb.collection('rules_base').update(id, body: {
-      'child_name':   childName,
-      'day_of_week':  dayOfWeek,
-      'event_time':   eventTime,
-      'activity':     activity,
-      'location':     location,
-      'is_shared':    isShared,
-      'is_logistics': isLogistics,
+      'child_name':    childName,
+      'day_of_week':   dayOfWeek,
+      'event_time':    eventTime,
+      'activity':      activity,
+      'location':      location,
+      'is_shared':     isShared,
+      'is_logistics':  isLogistics,
+      'handover_from': handoverFrom ?? '',
     });
     _invalidate();
   }

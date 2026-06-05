@@ -181,6 +181,8 @@ class SettingsScreen extends ConsumerWidget {
               const _RotationAnchorCard(),
               const SizedBox(height: 8),
               _RotationSchemePicker(ref: ref),
+              const SizedBox(height: 8),
+              const _HandoverSetupCard(),
               const SizedBox(height: 16),
               Text(
                 'Recurring rules — standing weekday overrides created via the '
@@ -1345,6 +1347,179 @@ class _CyclePreview extends StatelessWidget {
         height: 10,
         decoration: BoxDecoration(color: color, shape: BoxShape.circle),
       );
+}
+
+// ── Handover setup card ───────────────────────────────────────────────────────
+
+class _HandoverSetupCard extends ConsumerStatefulWidget {
+  const _HandoverSetupCard();
+
+  @override
+  ConsumerState<_HandoverSetupCard> createState() => _HandoverSetupCardState();
+}
+
+class _HandoverSetupCardState extends ConsumerState<_HandoverSetupCard> {
+  bool _expanded = false;
+
+  // Form state
+  int        _dayOfWeek = DateTime.sunday;
+  TimeOfDay  _timeA     = const TimeOfDay(hour: 10, minute: 0);
+  TimeOfDay  _timeB     = const TimeOfDay(hour: 12, minute: 0);
+  bool       _saving    = false;
+
+  String _fmtTime(TimeOfDay t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  String _dayName(int d) => const {
+    1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday',
+    5: 'Friday',  6: 'Saturday', 7: 'Sunday',
+  }[d]!;
+
+  Future<void> _save(String parentA, String parentB) async {
+    setState(() => _saving = true);
+    try {
+      final notifier = ref.read(baseRulesNotifierProvider.notifier);
+      final existing = (await ref.read(baseRulesProvider.future))
+          .where((r) => r.handoverFrom != null)
+          .toList();
+
+      // Delete any old directional handover rules before recreating.
+      for (final r in existing) {
+        await notifier.delete(r.id);
+      }
+
+      await notifier.create(
+        childName:    'All',
+        dayOfWeek:    _dayOfWeek,
+        eventTime:    _fmtTime(_timeA),
+        activity:     'Weekly handover',
+        location:     '',
+        isShared:     false,
+        isLogistics:  true,
+        handoverFrom: parentA,
+      );
+      await notifier.create(
+        childName:    'All',
+        dayOfWeek:    _dayOfWeek,
+        eventTime:    _fmtTime(_timeB),
+        activity:     'Weekly handover',
+        location:     '',
+        isShared:     false,
+        isLogistics:  true,
+        handoverFrom: parentB,
+      );
+
+      if (mounted) setState(() { _expanded = false; _saving = false; });
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final household = ref.watch(householdProvider).valueOrNull;
+    final parentA   = household?.rotationParentEvenName ?? 'Parent A';
+    final parentB   = household?.rotationParentOddName  ?? 'Parent B';
+
+    final rulesAsync = ref.watch(baseRulesProvider);
+    final handoverRules = rulesAsync.valueOrNull
+        ?.where((r) => r.handoverFrom != null)
+        .toList() ?? [];
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Column(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.swap_horiz_outlined),
+            title: const Text('Weekly handover'),
+            subtitle: handoverRules.isEmpty
+                ? const Text('Not configured')
+                : Text(handoverRules
+                    .map((r) => '${r.handoverFrom} → ${r.eventTime}')
+                    .join('  ·  ')),
+            trailing: IconButton(
+              icon: Icon(_expanded ? Icons.expand_less : Icons.edit_outlined),
+              onPressed: () => setState(() => _expanded = !_expanded),
+            ),
+          ),
+          if (_expanded) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Handover day
+                  DropdownButtonFormField<int>(
+                    value: _dayOfWeek,
+                    decoration: const InputDecoration(
+                      labelText: 'Handover day',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: List.generate(7, (i) => i + 1).map((d) =>
+                      DropdownMenuItem(value: d, child: Text(_dayName(d))),
+                    ).toList(),
+                    onChanged: (v) => setState(() => _dayOfWeek = v!),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Parent A drop-off time
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('$parentA drops at'),
+                    trailing: TextButton(
+                      child: Text(_fmtTime(_timeA),
+                          style: const TextStyle(fontSize: 16)),
+                      onPressed: () async {
+                        final t = await showTimePicker(
+                          context: context, initialTime: _timeA);
+                        if (t != null) setState(() => _timeA = t);
+                      },
+                    ),
+                  ),
+
+                  // Parent B drop-off time
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('$parentB drops at'),
+                    trailing: TextButton(
+                      child: Text(_fmtTime(_timeB),
+                          style: const TextStyle(fontSize: 16)),
+                      onPressed: () async {
+                        final t = await showTimePicker(
+                          context: context, initialTime: _timeB);
+                        if (t != null) setState(() => _timeB = t);
+                      },
+                    ),
+                  ),
+
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: _saving ? null : () => _save(parentA, parentB),
+                      child: _saving
+                          ? const SizedBox(
+                              height: 18, width: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white))
+                          : const Text('Save handover times'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 // ── Absence section ───────────────────────────────────────────────────────────

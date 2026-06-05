@@ -246,7 +246,13 @@ class ResolutionEngine {
 
   /// Resolves all scheduled events for [date], sorted chronologically.
   List<ResolvedEvent> resolveDay(DateTime date) {
-    final rules  = baseRules.where((r) => r.dayOfWeek == date.weekday).toList();
+    final rules = baseRules.where((r) {
+      if (r.dayOfWeek != date.weekday) return false;
+      // Directional handover rules only render on weeks where the named parent
+      // is the outgoing custody holder (their week is ending on this day).
+      if (r.handoverFrom != null && r.handoverFrom != weekOwner(date)) return false;
+      return true;
+    }).toList();
     final events = rules.map((r) => _resolveRule(r, date)).toList();
 
     // Ad-hoc one-off events
@@ -269,6 +275,7 @@ class ResolutionEngine {
             note:           o.note,
             isAdhoc:        true,
             isShared:       o.isShared,
+            isLogistics:    o.isLogistics,
             overrideId:     o.id,
             custodyNote:    custodyNote,
           );
