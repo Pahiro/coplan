@@ -155,7 +155,7 @@ fi
 if [ "$SKIP_WEB" = false ]; then
     if [ "$SKIP_BUILD" = false ]; then
         info "Building web..."
-        flutter build web --dart-define=PB_URL="$PB_URL"
+        flutter build web --dart-define=PB_URL="$PB_URL" --dart-define=APP_VERSION="v$(get_version_name)+$(get_version_code)"
         # Cache-bust: stamp version on flutter_bootstrap.js reference
         CACHE_VER="$(date +%s)"
         sed -i "s|flutter_bootstrap.js|flutter_bootstrap.js?v=$CACHE_VER|g" \

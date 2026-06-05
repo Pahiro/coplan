@@ -88,15 +88,19 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 24),
 
-          // Version footer
+          // Version footer — PackageInfo works on Android; web falls back to
+          // the APP_VERSION dart-define baked in at build time by deploy.sh.
           Center(
             child: FutureBuilder<PackageInfo>(
               future: PackageInfo.fromPlatform(),
               builder: (context, snap) {
-                final info    = snap.data;
-                final version = info != null
+                const webFallback = String.fromEnvironment('APP_VERSION');
+                final info = snap.data;
+                final version = (info != null && info.version.isNotEmpty)
                     ? 'v${info.version}+${info.buildNumber}'
-                    : '...';
+                    : webFallback.isNotEmpty
+                        ? webFallback
+                        : '...';
                 return Text(
                   'CoPlan $version',
                   style: TextStyle(
