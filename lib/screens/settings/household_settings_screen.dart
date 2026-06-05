@@ -12,9 +12,6 @@ class HouseholdSettingsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final household     = ref.watch(householdProvider).valueOrNull;
-    final householdMode = household?.mode ?? 'custody';
-
     return Scaffold(
       appBar: AppBar(title: const Text('Household')),
       body: ListView(
@@ -26,51 +23,6 @@ class HouseholdSettingsScreen extends ConsumerWidget {
           // Household management card
           const _HouseholdCard(),
           const SizedBox(height: 16),
-
-          // Mode picker
-          Card(
-            margin: const EdgeInsets.only(bottom: 16),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Mode',
-                      style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 10),
-                  SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(
-                        value: 'custody',
-                        icon: Icon(Icons.swap_horiz, size: 18),
-                        label: Text('Custody'),
-                      ),
-                      ButtonSegment(
-                        value: 'shared',
-                        icon: Icon(Icons.people_outline, size: 18),
-                        label: Text('Shared'),
-                      ),
-                    ],
-                    selected: {householdMode},
-                    onSelectionChanged: (s) =>
-                        ref.read(householdProvider.notifier).updateMode(s.first),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    householdMode == 'shared'
-                        ? 'Both parents are always responsible. '
-                          'Use requests to coordinate who handles pickups.'
-                        : 'Days rotate between parents by the scheme below. '
-                          'Requests transfer custody for a day or time window.',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.grey),
-                  ),
-                ],
-              ),
-            ),
-          ),
 
           // Children section
           Text(

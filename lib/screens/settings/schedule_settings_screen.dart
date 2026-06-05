@@ -24,12 +24,57 @@ class ScheduleSettingsScreen extends ConsumerWidget {
           16 + MediaQuery.of(context).padding.bottom,
         ),
         children: [
+          // Mode picker
+          Card(
+            margin: const EdgeInsets.only(bottom: 16),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Mode',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 10),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(
+                        value: 'custody',
+                        icon: Icon(Icons.swap_horiz, size: 18),
+                        label: Text('Custody'),
+                      ),
+                      ButtonSegment(
+                        value: 'shared',
+                        icon: Icon(Icons.people_outline, size: 18),
+                        label: Text('Shared'),
+                      ),
+                    ],
+                    selected: {householdMode},
+                    onSelectionChanged: (s) =>
+                        ref.read(householdProvider.notifier).updateMode(s.first),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    householdMode == 'shared'
+                        ? 'Both parents are always responsible. '
+                          'Use requests to coordinate who handles pickups.'
+                        : 'Days rotate between parents by the scheme below. '
+                          'Requests transfer custody for a day or time window.',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
           if (householdMode != 'custody') ...[
             const Card(
               child: Padding(
                 padding: EdgeInsets.all(16),
                 child: Text(
-                  'Schedule settings apply to custody mode only.',
+                  'Rotation settings apply to custody mode only.',
                   style: TextStyle(color: Colors.grey),
                 ),
               ),
