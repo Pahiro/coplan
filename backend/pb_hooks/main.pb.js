@@ -25,7 +25,7 @@ cronAdd("freezeRecurring", "5 0 * * *", () => {
         const mondayOf = (d) => { const m = new Date(d); m.setUTCDate(d.getUTCDate() - (isoDow(d) - 1)); m.setUTCHours(0, 0, 0, 0); return m; };
 
         const now = new Date();
-        const today = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+        const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
         const custodyColl = dao.findCollectionByNameOrId("custody_requests");
 
         // ── Process each household independently ────────────────────────────
