@@ -266,6 +266,7 @@ class ManualOverridesNotifier extends AsyncNotifier<void> {
     required String activity,
     required String location,
     required bool isShared,
+    required bool isLogistics,
     String? endTime,
     String? note,
   }) async {
@@ -276,6 +277,7 @@ class ManualOverridesNotifier extends AsyncNotifier<void> {
       'activity':      activity,
       'location':      location,
       'is_shared':     isShared,
+      'is_logistics':  isLogistics,
       'end_time':      endTime ?? '',
       'note':          note ?? '',
     });

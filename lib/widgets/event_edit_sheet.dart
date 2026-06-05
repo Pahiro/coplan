@@ -100,6 +100,7 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
               activity:     _activityCtrl.text.trim(),
               location:     _locationCtrl.text.trim(),
               isShared:     _isShared,
+              isLogistics:  _isLogistics,
               endTime:      _endTime != null ? _fmtTime(_endTime!) : null,
               note:         _noteCtrl.text.trim(),
             );
@@ -266,17 +267,15 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
               subtitle: const Text('Both parents always see this event'),
               contentPadding: EdgeInsets.zero,
             ),
-            // Logistics toggle — only meaningful for standing rules
-            if (!_isEditOverride)
-              SwitchListTile(
-                value: _isLogistics,
-                onChanged: (v) => setState(() => _isLogistics = v),
-                title: const Text('Logistics event'),
-                subtitle: const Text(
-                    'Always shown in grey — use for routine events implied '
-                    'by having the kids (e.g. school pickup, handover)'),
-                contentPadding: EdgeInsets.zero,
-              ),
+            // Logistics toggle
+            SwitchListTile(
+              value: _isLogistics,
+              onChanged: (v) => setState(() => _isLogistics = v),
+              title: const Text('Logistics event'),
+              subtitle: const Text(
+                  'Shown in grey — use for routine handover/pickup events'),
+              contentPadding: EdgeInsets.zero,
+            ),
             const SizedBox(height: 16),
 
             SizedBox(
