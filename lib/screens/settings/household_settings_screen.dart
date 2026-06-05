@@ -6,7 +6,6 @@ import '../../models/app_colors.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/colors_provider.dart';
 import '../../providers/household_provider.dart';
-import '../../widgets/color_setting_row.dart';
 
 class HouseholdSettingsScreen extends ConsumerWidget {
   const HouseholdSettingsScreen({super.key});
@@ -75,7 +74,7 @@ class HouseholdSettingsScreen extends ConsumerWidget {
 
           // Children section
           Text(
-            'Children — colours show on event cards for solo events.',
+            'Children — set colours in Appearance.',
             style: Theme.of(context)
                 .textTheme
                 .bodySmall
@@ -399,30 +398,25 @@ class _ChildrenCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final colors   = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
     final children = ref.watch(householdChildNamesProvider);
 
     return Column(
       children: [
-        if (children.isEmpty)
-          const Card(
-            margin: EdgeInsets.only(bottom: 8),
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('No children yet — add one below.',
-                  style: TextStyle(color: Colors.grey)),
+        if (children.isNotEmpty)
+          Card(
+            margin: const EdgeInsets.only(bottom: 8),
+            child: Column(
+              children: children.map((child) => ListTile(
+                leading: const Icon(Icons.person_outline),
+                title: Text(child.name),
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  tooltip: 'Remove ${child.name}',
+                  onPressed: () => _remove(context, ref, child.id, child.name),
+                ),
+              )).toList(),
             ),
           ),
-        ...children.map((child) => ColorSettingRow(
-              label: child.name,
-              description: "Shown on ${child.name}-specific events",
-              current: colors.childColor(child.name),
-              isEditable: true,
-              onChanged: (c) => ref
-                  .read(colorsProvider.notifier)
-                  .updateChildColor(child.id, c),
-              onDelete: () => _remove(context, ref, child.id, child.name),
-            )),
         Align(
           alignment: Alignment.centerLeft,
           child: OutlinedButton.icon(

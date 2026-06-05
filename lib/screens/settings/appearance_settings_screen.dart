@@ -8,6 +8,7 @@ import '../../providers/household_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../widgets/color_setting_row.dart';
 
+
 class AppearanceSettingsScreen extends ConsumerWidget {
   const AppearanceSettingsScreen({super.key});
 
@@ -17,6 +18,7 @@ class AppearanceSettingsScreen extends ConsumerWidget {
     final colors     = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
     final myUserId   = ref.watch(authProvider).valueOrNull?.userId ?? '';
     final household  = ref.watch(householdProvider).valueOrNull;
+    final children   = ref.watch(householdChildNamesProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Appearance')),
@@ -82,6 +84,29 @@ class AppearanceSettingsScreen extends ConsumerWidget {
               onChanged: (c) =>
                   ref.read(colorsProvider.notifier).updateMyColor(c),
             )),
+
+          // Child colours
+          if (children.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 8, 4, 4),
+              child: Text(
+                'Children',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleSmall
+                    ?.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ),
+            ...children.map((child) => ColorSettingRow(
+              label: child.name,
+              description: "Shown on ${child.name}-specific events",
+              current: colors.childColor(child.name),
+              isEditable: true,
+              onChanged: (c) => ref
+                  .read(colorsProvider.notifier)
+                  .updateChildColor(child.id, c),
+            )),
+          ],
         ],
       ),
     );
