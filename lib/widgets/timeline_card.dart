@@ -28,11 +28,13 @@ class TimelineCard extends ConsumerWidget {
     final isHelper =
         household?.helpers.any((h) => h.displayName == parent) ?? false;
 
-    // Logistics events (school pickup etc.) are greyed out when a custody
-    // override has changed who has the kids — still visible but de-emphasised.
+    // Logistics events are dimmed (keep parent colour identity, reduce opacity)
+    // when a custody request has already covered this slot.
     final isGreyed = event.isLogistics;
-    final parentColor = isGreyed ? Colors.grey.shade400 : colors.parentColor(parent);
-    final parentLight = isGreyed ? Colors.grey.shade100 : colors.parentLightColor(parent);
+    final parentColor = colors.parentColor(parent)
+        .withOpacity(isGreyed ? 0.35 : 1.0);
+    final parentLight = colors.parentLightColor(parent)
+        .withOpacity(isGreyed ? 0.35 : 1.0);
 
     final timeStr =
         '${event.time.hour.toString().padLeft(2, '0')}:${event.time.minute.toString().padLeft(2, '0')}';

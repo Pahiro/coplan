@@ -29,6 +29,9 @@ class WidgetCacheService {
       final recurring    = await _fetchRecurring();
       final upcoming     = await _nextUpcomingEvents(rules, weekdayRules, recurring);
 
+      // Only overwrite the cache when we actually have events — an empty result
+      // from a transient auth blip or network hiccup should never wipe good data.
+      if (upcoming.isEmpty) return;
       final json = jsonEncode(upcoming.map((e) => e.toJson()).toList());
       await HomeWidget.saveWidgetData<String>(AppConstants.widgetCacheKey, json);
       // Redraw every placed widget style. Each style is a separate Glance
