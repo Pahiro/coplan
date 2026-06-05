@@ -23,6 +23,11 @@ import '../models/weekday_rule.dart';
 ///   - Day transfers  override [dayOwner] for that date (higher priority than weekday rules).
 ///   - Windows        affect [parentAtTime] during their pickup→return window only.
 ///
+/// Per-child custody: [parentAtTime], [dayTransferFor], and [_custodyNoteAt]
+/// accept an optional [child] parameter. When supplied, only custody requests
+/// that cover that child (or "All") are considered — so a transfer for Henri
+/// does not affect Chris's events.
+///
 /// Parent identity is now string-based (display names from the household).
 /// [rotationParentEven] and [rotationParentOdd] replace the former hardcoded
 /// `Parent.bennet` / `Parent.jana` enum values.
@@ -114,6 +119,18 @@ class ResolutionEngine {
     return _applyAbsence(scheduled, date);
   }
 
+  /// The primary responsible parent for [child] on [date]. Useful for
+  /// per-child calendar colouring. Falls back to [dayOwner] when the child
+  /// has no specific custody request.
+  String dayOwnerForChild(DateTime date, String child) {
+    if (child == 'All') return dayOwner(date);
+    final transfer = dayTransferFor(date, child: child);
+    if (transfer != null) return transfer.toParent;
+    if (isSharedMode) return 'Both';
+    final scheduled = _weekdayRuleParent(date.weekday) ?? holidayOwner(date) ?? weekOwner(date);
+    return _applyAbsence(scheduled, date);
+  }
+
   /// Returns the absence covering [date] where the absent parent matches
   /// [scheduledParent], or null if none.
   AbsencePeriod? absenceFor(DateTime date) =>
@@ -154,8 +171,11 @@ class ResolutionEngine {
   }
 
   /// The effective day-transfer (real or virtual recurring) for [date], if any.
-  CustodyRequest? dayTransferFor(DateTime date) =>
-      effectiveCustodyFor(date).firstWhereOrNull((r) => r.isDayTransfer);
+  /// When [child] is provided (and not "All"), only transfers covering that
+  /// specific child are considered.
+  CustodyRequest? dayTransferFor(DateTime date, {String? child}) =>
+      effectiveCustodyFor(date).firstWhereOrNull(
+          (r) => r.isDayTransfer && _requestMatchesChild(r, child));
 
   /// Expands recurring arrangements into virtual requests for [date].
   /// Only fires for today/future dates (past is served by frozen real rows),
@@ -230,9 +250,12 @@ class ResolutionEngine {
   }
 
   /// Returns the parent who actually has the kids at [time] on [date].
-  String parentAtTime(DateTime date, TimeOfDay time) {
+  /// When [child] is provided (and not "All"), only custody requests covering
+  /// that child are considered — enabling per-child custody resolution.
+  String parentAtTime(DateTime date, TimeOfDay time, {String? child}) {
     final timeMin = time.hour * 60 + time.minute;
     for (final r in custodyWindows(date)) {
+      if (!_requestMatchesChild(r, child)) continue;
       final pickup    = _parseTime(r.pickupTime);
       final pickupMin = pickup.hour * 60 + pickup.minute;
       int returnMin   = 24 * 60;
@@ -246,11 +269,11 @@ class ResolutionEngine {
     }
     // Day transfers only take effect from their pickup time onwards — events
     // before the handover still belong to the original day owner.
-    final transfer = dayTransferFor(date);
+    final transfer = dayTransferFor(date, child: child);
     if (transfer != null) {
       final p = _parseTime(transfer.pickupTime);
       if (timeMin >= p.hour * 60 + p.minute) return transfer.toParent;
-      return _weekdayRuleParent(date.weekday) ?? weekOwner(date);
+      return _weekdayRuleParent(date.weekday) ?? holidayOwner(date) ?? weekOwner(date);
     }
     return dayOwner(date);
   }
@@ -273,9 +296,10 @@ class ResolutionEngine {
         .where((o) => _sameDay(o.targetDate, date) && o.isAdhoc)
         .map((o) {
           final t = _parseTime(o.overrideTime ?? '09:00');
-          final custodyNote = _custodyNoteAt(date, t);
+          final adhocChild = o.childName == 'All' ? null : o.childName;
+          final custodyNote = _custodyNoteAt(date, t, child: adhocChild);
           final actualParent =
-              custodyNote != null ? parentAtTime(date, t) : o.assignedParent;
+              custodyNote != null ? parentAtTime(date, t, child: adhocChild) : o.assignedParent;
           return ResolvedEvent(
             date:           date,
             time:           t,
@@ -367,9 +391,10 @@ class ResolutionEngine {
     }
 
     // ── 3. Accepted custody requests may override responsible parent ──────────
-    final note        = _custodyNoteAt(date, eventTime);
+    final child       = rule.childName == 'All' ? null : rule.childName;
+    final note        = _custodyNoteAt(date, eventTime, child: child);
     final actualParent =
-        note != null ? parentAtTime(date, eventTime) : scheduleParent;
+        note != null ? parentAtTime(date, eventTime, child: child) : scheduleParent;
     // When a custody request changes the parent, drop the manual-override
     // reason — showing the override's reason with the custody parent is
     // confusing mixed provenance (see ISSUES.md #3).
@@ -393,12 +418,14 @@ class ResolutionEngine {
 
   /// Returns a short human-readable note when an accepted custody request
   /// changes who is responsible for an event at [time] on [date].
+  /// When [child] is provided, only requests covering that child are checked.
   /// Returns null when no custody request affects this slot.
-  String? _custodyNoteAt(DateTime date, TimeOfDay time) {
+  String? _custodyNoteAt(DateTime date, TimeOfDay time, {String? child}) {
     final timeMin = time.hour * 60 + time.minute;
 
     // Window requests first (they apply only during pickup→return).
     for (final r in custodyWindows(date)) {
+      if (!_requestMatchesChild(r, child)) continue;
       final pickup    = _parseTime(r.pickupTime);
       final pickupMin = pickup.hour * 60 + pickup.minute;
       int returnMin   = 24 * 60;
@@ -415,7 +442,7 @@ class ResolutionEngine {
     }
 
     // Day transfer only takes effect from its pickup time onwards.
-    final transfer = dayTransferFor(date);
+    final transfer = dayTransferFor(date, child: child);
     if (transfer != null) {
       final p = _parseTime(transfer.pickupTime);
       if (timeMin >= p.hour * 60 + p.minute) {
@@ -424,6 +451,17 @@ class ResolutionEngine {
     }
 
     return null;
+  }
+
+  /// True when [r] covers [child]. Matches when child is null/"All", when the
+  /// request covers "All" children, or when the request's comma-separated
+  /// child list contains [child].
+  bool _requestMatchesChild(CustodyRequest r, String? child) {
+    if (child == null || child == 'All' || r.childName == 'All') return true;
+    return r.childName
+        .split(',')
+        .map((s) => s.trim())
+        .contains(child);
   }
 
   /// One-line transport summary for a custody-request event tile, e.g.
