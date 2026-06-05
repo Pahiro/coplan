@@ -95,16 +95,6 @@ class ScheduleSettingsScreen extends ConsumerWidget {
             const _HandoverSetupCard(),
             const SizedBox(height: 16),
             Text(
-              'Recurring arrangements — weekly pickups and transfers.',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: Colors.grey),
-            ),
-            const SizedBox(height: 8),
-            const _RecurringArrangementsSection(),
-            const SizedBox(height: 16),
-            Text(
               'Weekday rules — standing day-of-week custody overrides created '
               'via the "Repeat every …" toggle on a request.',
               style: Theme.of(context)
@@ -513,88 +503,6 @@ class _HandoverSetupCardState extends ConsumerState<_HandoverSetupCard> {
           ],
         ],
       ),
-    );
-  }
-}
-
-// ── Recurring arrangements (weekly pickups / transfers) ───────────────────────
-
-class _RecurringArrangementsSection extends ConsumerWidget {
-  const _RecurringArrangementsSection();
-
-  static String _dayName(int dow) {
-    final date = DateTime(2024, 1, 1).add(Duration(days: dow - 1));
-    return DateFormat('EEEE').format(date);
-  }
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final colors = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
-    final async  = ref.watch(recurringArrangementsProvider);
-    return async.when(
-      loading: () => const LinearProgressIndicator(),
-      error: (e, _) =>
-          Text('Could not load arrangements: $e',
-              style: const TextStyle(color: Colors.red)),
-      data: (all) {
-        final active = all.where((r) => r.active).toList()
-          ..sort((a, b) => a.dayOfWeek == b.dayOfWeek
-              ? a.pickupTime.compareTo(b.pickupTime)
-              : a.dayOfWeek.compareTo(b.dayOfWeek));
-
-        if (active.isEmpty) {
-          return Card(
-            margin: const EdgeInsets.only(bottom: 16),
-            child: const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'No recurring arrangements.',
-                style: TextStyle(color: Colors.grey),
-              ),
-            ),
-          );
-        }
-
-        return Card(
-          margin: const EdgeInsets.only(bottom: 16),
-          child: Column(
-            children: active.map((r) {
-              final time = r.pickupTime;
-              final returnLabel = r.returnTimeTbd
-                  ? 'return TBD'
-                  : r.returnTime != null
-                      ? 'until ${r.returnTime}'
-                      : null;
-              return ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: colors.parentLightColor(r.toParent),
-                  child: Text(
-                    r.toParent[0],
-                    style: TextStyle(
-                      color: colors.parentColor(r.toParent),
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                title: Text('${_dayName(r.dayOfWeek)} · $time'),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('${r.childName} → ${r.toParent}'
-                        '${returnLabel != null ? ' ($returnLabel)' : ''}'),
-                    if (r.note != null && r.note!.isNotEmpty)
-                      Text(r.note!,
-                          style: const TextStyle(
-                              fontSize: 11, color: Colors.grey)),
-                  ],
-                ),
-                isThreeLine:
-                    r.note != null && r.note!.isNotEmpty,
-              );
-            }).toList(),
-          ),
-        );
-      },
     );
   }
 }
