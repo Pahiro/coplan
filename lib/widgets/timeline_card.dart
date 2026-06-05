@@ -28,13 +28,12 @@ class TimelineCard extends ConsumerWidget {
     final isHelper =
         household?.helpers.any((h) => h.displayName == parent) ?? false;
 
-    // Logistics events are dimmed (keep parent colour identity, reduce opacity)
-    // when a custody request has already covered this slot.
+    // Logistics events are dimmed uniformly when a custody request has already
+    // covered this slot — wrap the whole card in Opacity so colours and text
+    // scale together and text stays readable.
     final isGreyed = event.isLogistics;
-    final parentColor = colors.parentColor(parent)
-        .withOpacity(isGreyed ? 0.35 : 1.0);
-    final parentLight = colors.parentLightColor(parent)
-        .withOpacity(isGreyed ? 0.35 : 1.0);
+    final parentColor = colors.parentColor(parent);
+    final parentLight = colors.parentLightColor(parent);
 
     final timeStr =
         '${event.time.hour.toString().padLeft(2, '0')}:${event.time.minute.toString().padLeft(2, '0')}';
@@ -42,7 +41,9 @@ class TimelineCard extends ConsumerWidget {
         ? '${event.endTime!.hour.toString().padLeft(2, '0')}:${event.endTime!.minute.toString().padLeft(2, '0')}'
         : null;
 
-    return Card(
+    return Opacity(
+      opacity: isGreyed ? 0.45 : 1.0,
+      child: Card(
       margin: const EdgeInsets.only(bottom: 10),
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -287,7 +288,7 @@ class TimelineCard extends ConsumerWidget {
           ],
         ),
       ),
-    );
+    ));
   }
 }
 
