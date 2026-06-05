@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../models/absence_period.dart';
 import '../models/base_rule.dart';
+import '../models/holiday_block.dart';
 import '../models/custody_request.dart';
 import '../models/manual_override.dart';
 import '../models/recurring_arrangement.dart';
@@ -32,6 +33,7 @@ class ResolutionEngine {
   final List<WeekdayRule>          weekdayRules;
   final List<RecurringArrangement> recurringArrangements;
   final List<AbsencePeriod>        absencePeriods;
+  final List<HolidayBlock>         holidayBlocks;
 
   /// Rotation config — previously from AppConstants, now passed in.
   final DateTime rotationAnchor;
@@ -61,6 +63,7 @@ class ResolutionEngine {
     this.weekdayRules          = const [],
     this.recurringArrangements = const [],
     this.absencePeriods        = const [],
+    this.holidayBlocks         = const [],
   }) : rotationScheme = rotationScheme ?? RotationScheme.weekly();
 
   /// True when this engine operates in shared-household mode (no rotation).
@@ -68,12 +71,20 @@ class ResolutionEngine {
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
+  /// The holiday block covering [date], if any.
+  HolidayBlock? holidayBlockFor(DateTime date) =>
+      holidayBlocks.firstWhereOrNull((b) => b.coversDate(date));
+
+  /// The parent assigned by a holiday block on [date], or null if no block
+  /// covers that date.
+  String? holidayOwner(DateTime date) => holidayBlockFor(date)?.assignedParent;
+
   /// The day owner from weekday rules or base rotation only, ignoring any
   /// accepted day-transfer custody request. Used for split-colour rendering
   /// when a transfer pickup falls mid-day.
   String baseOwner(DateTime date) {
     if (isSharedMode) return 'Both';
-    return _weekdayRuleParent(date.weekday) ?? weekOwner(date);
+    return _weekdayRuleParent(date.weekday) ?? holidayOwner(date) ?? weekOwner(date);
   }
 
   /// Returns the rotation parent for [date] based on the configured scheme.
@@ -99,7 +110,7 @@ class ResolutionEngine {
     final transfer = dayTransferFor(date);
     if (transfer != null) return transfer.toParent;
     if (isSharedMode) return 'Both';
-    final scheduled = _weekdayRuleParent(date.weekday) ?? weekOwner(date);
+    final scheduled = _weekdayRuleParent(date.weekday) ?? holidayOwner(date) ?? weekOwner(date);
     return _applyAbsence(scheduled, date);
   }
 
@@ -248,9 +259,11 @@ class ResolutionEngine {
   List<ResolvedEvent> resolveDay(DateTime date) {
     final rules = baseRules.where((r) {
       if (r.dayOfWeek != date.weekday) return false;
-      // Directional handover rules only render on weeks where the named parent
-      // is the outgoing custody holder (their week is ending on this day).
-      if (r.handoverFrom != null && r.handoverFrom != weekOwner(date)) return false;
+      // Directional handover rules only render when the named parent is the
+      // outgoing custody holder. Use holiday owner if one covers this date,
+      // otherwise fall back to the rotation week owner.
+      if (r.handoverFrom != null &&
+          r.handoverFrom != (holidayOwner(date) ?? weekOwner(date))) return false;
       return true;
     }).toList();
     final events = rules.map((r) => _resolveRule(r, date)).toList();
@@ -342,7 +355,7 @@ class ResolutionEngine {
       scheduleReason = override.reason.isEmpty ? null : override.reason;
     } else {
       final weekdayParent = _weekdayRuleParent(date.weekday);
-      final rotationParent = weekdayParent ?? weekOwner(date);
+      final rotationParent = weekdayParent ?? holidayOwner(date) ?? weekOwner(date);
       final absence = absenceFor(date);
       if (absence != null && absence.absentParent == rotationParent) {
         scheduleParent = _applyAbsence(rotationParent, date);

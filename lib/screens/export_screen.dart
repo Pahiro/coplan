@@ -15,6 +15,7 @@ import '../engine/resolution_engine.dart';
 import '../models/custody_request.dart';
 import '../models/manual_override.dart';
 import '../providers/absence_provider.dart';
+import '../providers/holiday_provider.dart';
 import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 
@@ -102,6 +103,8 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
         ref.read(recurringArrangementsProvider).valueOrNull ?? const [];
     final allAbsences =
         ref.read(absencePeriodsProvider).valueOrNull ?? const [];
+    final allHolidays =
+        ref.read(holidayBlocksProvider).valueOrNull ?? const [];
 
     final start = _range!.start;
     final end = _range!.end;
@@ -148,6 +151,8 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
           .toList();
       final dayAbsences =
           allAbsences.where((a) => a.coversDate(date)).toList();
+      final dayHolidays =
+          allHolidays.where((b) => b.coversDate(date)).toList();
 
       final engine = ResolutionEngine(
         baseRules: rules,
@@ -156,6 +161,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
         weekdayRules: weekdayRules,
         recurringArrangements: recurring,
         absencePeriods: dayAbsences,
+        holidayBlocks: dayHolidays,
         rotationAnchor: anchor,
         rotationParentEven: evenName,
         rotationParentOdd: oddName,

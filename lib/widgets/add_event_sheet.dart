@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../engine/resolution_engine.dart';
 import '../models/resolved_event.dart';
 import '../providers/custody_provider.dart';
+import '../providers/holiday_provider.dart';
 import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 
@@ -106,8 +107,10 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
         final anchor   = household?.rotationAnchorDate ?? DateTime(2025, 1, 6);
         final evenName = household?.rotationParentEvenName ?? 'Bennet';
         final oddName  = household?.rotationParentOddName  ?? 'Jana';
+        final holidays = ref.read(holidayBlocksProvider).valueOrNull ?? const [];
         final owner = ResolutionEngine(
           baseRules: const [], overrides: const [],
+          holidayBlocks: holidays,
           rotationAnchor: anchor,
           rotationParentEven: evenName,
           rotationParentOdd: oddName,

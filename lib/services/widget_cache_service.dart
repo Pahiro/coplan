@@ -8,6 +8,7 @@ import '../core/pb_client.dart';
 import '../engine/resolution_engine.dart';
 import '../models/base_rule.dart';
 import '../models/custody_request.dart';
+import '../models/holiday_block.dart';
 import '../models/manual_override.dart';
 import '../models/recurring_arrangement.dart';
 import '../models/resolved_event.dart';
@@ -27,7 +28,8 @@ class WidgetCacheService {
       final rules        = await _fetchBaseRules();
       final weekdayRules = await _fetchWeekdayRules();
       final recurring    = await _fetchRecurring();
-      final upcoming     = await _nextUpcomingEvents(rules, weekdayRules, recurring);
+      final holidays     = await _fetchHolidayBlocks();
+      final upcoming     = await _nextUpcomingEvents(rules, weekdayRules, recurring, holidays);
 
       // Only overwrite the cache when we actually have events — an empty result
       // from a transient auth blip or network hiccup should never wipe good data.
@@ -52,6 +54,7 @@ class WidgetCacheService {
     List<BaseRule> rules,
     List<WeekdayRule> weekdayRules,
     List<RecurringArrangement> recurring,
+    List<HolidayBlock> holidays,
   ) async {
     final now       = DateTime.now();
     final nowMinutes = now.hour * 60 + now.minute;
@@ -62,14 +65,16 @@ class WidgetCacheService {
 
     for (int i = 0; i < 3; i++) {
       final date     = now.add(Duration(days: i));
-      final overrides = await _fetchOverridesForDate(date);
-      final custody   = await _fetchCustodyForDate(date);
+      final overrides    = await _fetchOverridesForDate(date);
+      final custody      = await _fetchCustodyForDate(date);
+      final dayHolidays  = holidays.where((b) => b.coversDate(date)).toList();
       final dayEvents = ResolutionEngine(
         baseRules:             rules,
         overrides:             overrides,
         custodyRequests:       custody,
         weekdayRules:          weekdayRules,
         recurringArrangements: recurring,
+        holidayBlocks:         dayHolidays,
         rotationAnchor:        rotation.$1,
         rotationParentEven:    rotation.$2,
         rotationParentOdd:     rotation.$3,
@@ -114,6 +119,15 @@ class WidgetCacheService {
       return records
           .map((r) => RecurringArrangement.fromRecord(r.toJson()))
           .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<List<HolidayBlock>> _fetchHolidayBlocks() async {
+    try {
+      final records = await pb.collection('holiday_blocks').getFullList();
+      return records.map((r) => HolidayBlock.fromRecord(r.toJson())).toList();
     } catch (_) {
       return [];
     }
