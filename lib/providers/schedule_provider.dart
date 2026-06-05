@@ -194,7 +194,6 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
     required String activity,
     required String location,
     required bool isShared,
-    bool isLogistics = false,
     String? handoverFrom,
   }) async {
     final hid = ref.read(householdProvider).valueOrNull?.id;
@@ -205,7 +204,6 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
       'activity':      activity,
       'location':      location,
       'is_shared':     isShared,
-      'is_logistics':  isLogistics,
       'handover_from': handoverFrom ?? '',
       if (hid != null) 'household': hid,
     });
@@ -220,7 +218,6 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
     required String activity,
     required String location,
     required bool isShared,
-    bool isLogistics = false,
     String? handoverFrom,
   }) async {
     await pb.collection('rules_base').update(id, body: {
@@ -230,7 +227,6 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
       'activity':      activity,
       'location':      location,
       'is_shared':     isShared,
-      'is_logistics':  isLogistics,
       'handover_from': handoverFrom ?? '',
     });
     _invalidate();
@@ -266,7 +262,6 @@ class ManualOverridesNotifier extends AsyncNotifier<void> {
     required String activity,
     required String location,
     required bool isShared,
-    required bool isLogistics,
     String? endTime,
     String? note,
   }) async {
@@ -277,7 +272,6 @@ class ManualOverridesNotifier extends AsyncNotifier<void> {
       'activity':      activity,
       'location':      location,
       'is_shared':     isShared,
-      'is_logistics':  isLogistics,
       'end_time':      endTime ?? '',
       'note':          note ?? '',
     });

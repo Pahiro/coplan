@@ -28,10 +28,8 @@ class TimelineCard extends ConsumerWidget {
     final isHelper =
         household?.helpers.any((h) => h.displayName == parent) ?? false;
 
-    // Logistics events are dimmed uniformly when a custody request has already
-    // covered this slot — wrap the whole card in Opacity so colours and text
-    // scale together and text stays readable.
-    final isGreyed = event.isLogistics;
+    // Dim events when a custody request has shifted responsibility for this slot.
+    final isGreyed = event.custodyNote != null;
     final parentColor = colors.parentColor(parent);
     final parentLight = colors.parentLightColor(parent);
 

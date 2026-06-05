@@ -243,7 +243,6 @@ class CustodyRequestsNotifier
     required String assignedParent,
     String? endTime,
     String? note,
-    bool isLogistics = false,
   }) async {
     final auth = ref.read(authProvider).valueOrNull;
     final myId = auth?.userId ?? '';
@@ -258,7 +257,6 @@ class CustodyRequestsNotifier
       'created_by':      myId,
       'is_adhoc':        true,
       'is_shared':       true,
-      'is_logistics':    isLogistics,
       'activity':        activity,
       'location':        location,
       if (endTime != null && endTime.isNotEmpty) 'end_time': endTime,

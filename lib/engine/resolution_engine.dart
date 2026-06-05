@@ -312,7 +312,6 @@ class ResolutionEngine {
             note:           o.note,
             isAdhoc:        true,
             isShared:       o.isShared,
-            isLogistics:    o.isLogistics,
             overrideId:     o.id,
             custodyNote:    custodyNote,
           );
@@ -412,7 +411,6 @@ class ResolutionEngine {
       ruleId:         rule.id,
       overrideId:     override?.id,
       custodyNote:    note,
-      isLogistics:    rule.isLogistics,
     );
   }
 

@@ -110,8 +110,8 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
 
     @Composable
     private fun Style1Row(event: WidgetEvent) {
-        val accent    = if (event.isLogistics) Color(0xFF616161) else accentColor(event.parent)
-        val textColor = if (event.isLogistics) Color(0xFF757575) else Color(0xFFEEEEEE)
+        val accent    = if (event.isDimmed) Color(0xFF616161) else accentColor(event.parent)
+        val textColor = if (event.isDimmed) Color(0xFF757575) else Color(0xFFEEEEEE)
         val subColor  = Color(0xFF757575)
         Row(
             modifier = GlanceModifier.fillMaxWidth(),
@@ -216,12 +216,12 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
     @Composable
     private fun Style2Row(event: WidgetEvent) {
         val isBennet  = event.parent == "Bennet"
-        val baseColor = if (event.isLogistics) Color(0xFF424242)
+        val baseColor = if (event.isDimmed) Color(0xFF424242)
                         else if (isBennet) Color(0xFF1565C0) else Color(0xFFD81B60)
         val tokenBg   = baseColor.copy(alpha = 0.20f)
-        val tokenText = if (event.isLogistics) Color(0xFF757575)
+        val tokenText = if (event.isDimmed) Color(0xFF757575)
                         else if (isBennet) Color(0xFF90CAF9) else Color(0xFFF48FB1)
-        val textColor = if (event.isLogistics) Color(0xFF757575) else Color(0xFFEEEEEE)
+        val textColor = if (event.isDimmed) Color(0xFF757575) else Color(0xFFEEEEEE)
 
         Row(
             modifier = GlanceModifier.fillMaxWidth().padding(vertical = 6.dp),
@@ -315,8 +315,8 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
 
     @Composable
     private fun Style3Row(event: WidgetEvent, showLine: Boolean) {
-        val accent    = if (event.isLogistics) Color(0xFF616161) else accentColor(event.parent)
-        val textColor = if (event.isLogistics) Color(0xFF757575) else null
+        val accent    = if (event.isDimmed) Color(0xFF616161) else accentColor(event.parent)
+        val textColor = if (event.isDimmed) Color(0xFF757575) else null
         Row(
             modifier = GlanceModifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -425,7 +425,7 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
                     location     = o.optString("location", ""),
                     childName    = o.optString("childName", ""),
                     parent       = o.optString("parent", ""),
-                    isLogistics  = o.optBoolean("isLogistics", false)
+                    isDimmed  = o.optBoolean("dimmed", false)
                 )
             }
         }.getOrElse { emptyList() }
@@ -438,5 +438,5 @@ data class WidgetEvent(
     val location: String,
     val childName: String,
     val parent: String,
-    val isLogistics: Boolean = false
+    val isDimmed: Boolean = false
 )

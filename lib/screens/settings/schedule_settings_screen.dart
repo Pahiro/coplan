@@ -398,7 +398,6 @@ class _HandoverSetupCardState extends ConsumerState<_HandoverSetupCard> {
         activity:     'Weekly handover',
         location:     '',
         isShared:     false,
-        isLogistics:  true,
         handoverFrom: parentA,
       );
       await notifier.create(
@@ -408,7 +407,6 @@ class _HandoverSetupCardState extends ConsumerState<_HandoverSetupCard> {
         activity:     'Weekly handover',
         location:     '',
         isShared:     false,
-        isLogistics:  true,
         handoverFrom: parentB,
       );
 

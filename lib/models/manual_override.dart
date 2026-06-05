@@ -19,10 +19,6 @@ class ManualOverride {
   /// (e.g. birthday party, school trip).
   final bool isShared;
 
-  /// When true this adhoc event is a logistics/transport entry that should be
-  /// dimmed when a custody request already covers the same time window.
-  final bool isLogistics;
-
   const ManualOverride({
     required this.id,
     required this.targetDate,
@@ -38,7 +34,6 @@ class ManualOverride {
     this.adhocActivity,
     this.adhocLocation,
     this.isShared = false,
-    this.isLogistics = false,
   });
 
   factory ManualOverride.fromRecord(Map<String, dynamic> j) {
@@ -71,7 +66,6 @@ class ManualOverride {
       adhocActivity:  effectiveActivity.isNotEmpty ? effectiveActivity : null,
       adhocLocation:  j['location'] as String?,
       isShared:       (j['is_shared'] as bool?) ?? false,
-      isLogistics:    (j['is_logistics'] as bool?) ?? false,
     );
   }
 }

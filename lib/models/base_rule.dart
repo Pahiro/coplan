@@ -12,10 +12,6 @@ class BaseRule {
   /// but the event is tagged so both parents can see it is a shared obligation.
   final bool isShared;
 
-  /// Logistics events (school pickup, regular handover) are greyed out in the
-  /// UI when a custody override has changed who has the kids that day.
-  final bool isLogistics;
-
   /// When set, this rule only renders on weeks where the named parent is the
   /// outgoing custody holder (i.e. their rotation week is ending on this day).
   /// Used for directional handover rules — one per parent with different times.
@@ -29,7 +25,6 @@ class BaseRule {
     required this.location,
     required this.activity,
     this.isShared = false,
-    this.isLogistics = false,
     this.handoverFrom,
   });
 
@@ -41,7 +36,6 @@ class BaseRule {
         location: j['location'] as String,
         activity: j['activity'] as String,
         isShared: (j['is_shared'] as bool?) ?? false,
-        isLogistics: (j['is_logistics'] as bool?) ?? false,
         handoverFrom: (j['handover_from'] as String?)?.isNotEmpty == true
             ? j['handover_from'] as String
             : null,
