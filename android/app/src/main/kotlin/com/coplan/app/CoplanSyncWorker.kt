@@ -135,14 +135,18 @@ class CoplanSyncWorker(
             }
 
             // ── 3. Update all widget styles ──────────────────────────────
-            widgetPrefs.edit().putString("coplan_widget_events", upcoming.toString()).apply()
-            val manager = GlanceAppWidgetManager(ctx)
-            manager.getGlanceIds(CoplanWidget::class.java)
-                .forEach { id -> CoplanWidget().update(ctx, id) }
-            manager.getGlanceIds(CoplanWidget2::class.java)
-                .forEach { id -> CoplanWidget2().update(ctx, id) }
-            manager.getGlanceIds(CoplanWidget3::class.java)
-                .forEach { id -> CoplanWidget3().update(ctx, id) }
+            // Only overwrite when we have events — avoids blanking the widget
+            // due to a transient network/auth failure (mirrors Dart guard).
+            if (upcoming.length() > 0) {
+                widgetPrefs.edit().putString("coplan_widget_events", upcoming.toString()).apply()
+                val manager = GlanceAppWidgetManager(ctx)
+                manager.getGlanceIds(CoplanWidget::class.java)
+                    .forEach { id -> CoplanWidget().update(ctx, id) }
+                manager.getGlanceIds(CoplanWidget2::class.java)
+                    .forEach { id -> CoplanWidget2().update(ctx, id) }
+                manager.getGlanceIds(CoplanWidget3::class.java)
+                    .forEach { id -> CoplanWidget3().update(ctx, id) }
+            }
 
             // ── 4. Notify for new pending requests ───────────────────────
             if (myId.isNotEmpty()) notifyNewRequests(pbUrl, token, myId)

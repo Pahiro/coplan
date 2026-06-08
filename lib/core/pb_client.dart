@@ -12,12 +12,19 @@ const _pbUrlKey = 'pb_url';
 
 /// Reads the saved PB URL (or falls back to the build-time default) and
 /// creates the global [pb] client.
+///
+/// Always persists the effective URL so the Kotlin [CoplanSyncWorker] can
+/// read it from SharedPreferences (it falls back to localhost otherwise).
 Future<void> initPocketBase(SharedPreferences prefs) async {
   final store = AsyncAuthStore(
     save: (String data) async => prefs.setString('pb_auth', data),
     initial: prefs.getString('pb_auth'),
   );
   final url = prefs.getString(_pbUrlKey) ?? AppConstants.pbUrl;
+  // Ensure the URL is always persisted for the native worker.
+  if (!prefs.containsKey(_pbUrlKey)) {
+    await prefs.setString(_pbUrlKey, url);
+  }
   pb = PocketBase(url, authStore: store);
 }
 
