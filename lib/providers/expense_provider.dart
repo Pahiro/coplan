@@ -85,9 +85,31 @@ class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
     final records = await pb.collection('shared_expenses').getFullList(
       sort: '-created',
     );
+
+    // Auto-detect overdue splits: if due_date < today and still pending, mark overdue
+    await _markOverdueSplits();
+
     return records
         .map((r) => SharedExpense.fromRecord(r.toJson()))
         .toList();
+  }
+
+  /// Check all pending splits and mark as overdue if past due date.
+  Future<void> _markOverdueSplits() async {
+    try {
+      final now = DateTime.now();
+      final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      final pendingSplits = await pb.collection('expense_splits').getFullList(
+        filter: 'status = "pending" && due_date != "" && due_date < "$todayStr"',
+      );
+      for (final s in pendingSplits) {
+        await pb.collection('expense_splits').update(s.id, body: {
+          'status': 'overdue',
+        });
+      }
+    } catch (_) {
+      // Non-critical — silently ignore
+    }
   }
 
   /// Create a new expense with a single split (100% to the other parent).
@@ -148,6 +170,56 @@ class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
     ref.invalidate(expenseSummaryProvider);
   }
 
+  /// Update an existing expense. Recalculates unpaid splits if amount changed.
+  Future<void> updateExpense({
+    required String expenseId,
+    required String title,
+    String? description,
+    required int amount,
+    String childName = 'All',
+    String? category,
+    bool isRecurring = false,
+    String? recurrence,
+    int? dueDay,
+    DateTime? nextDueDate,
+  }) async {
+    // Get old amount to check if splits need recalculating
+    final old = await pb.collection('shared_expenses').getOne(expenseId);
+    final oldAmount = (old.data['amount'] as num?)?.toInt() ?? 0;
+
+    await pb.collection('shared_expenses').update(expenseId, body: {
+      'title':        title,
+      'description':  description ?? '',
+      'child_name':   childName,
+      'amount':       amount,
+      'category':     category ?? 'other',
+      'is_recurring': isRecurring,
+      'recurrence':   recurrence ?? '',
+      'due_day':      dueDay,
+      'next_due_date': nextDueDate != null ? _isoDate(nextDueDate) : '',
+    });
+
+    // Recalculate unpaid splits if amount changed
+    if (amount != oldAmount) {
+      final splits = await pb.collection('expense_splits').getFullList(
+        filter: 'expense = "$expenseId" && status != "paid"',
+      );
+      for (final s in splits) {
+        final splitType  = s.data['split_type'] as String? ?? 'percentage';
+        final splitValue = (s.data['split_value'] as num?)?.toDouble() ?? 100;
+        final newDue = splitType == 'percentage'
+            ? (amount * splitValue / 100).round()
+            : splitValue.toInt();
+        await pb.collection('expense_splits').update(s.id, body: {
+          'amount_due': newDue,
+        });
+      }
+    }
+
+    ref.invalidateSelf();
+    ref.invalidate(expenseSummaryProvider);
+  }
+
   /// Mark a split as paid.
   Future<void> markSplitPaid(String splitId, {String? reference, String? note}) async {
     await pb.collection('expense_splits').update(splitId, body: {
@@ -158,6 +230,31 @@ class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
     });
     ref.invalidateSelf();
     ref.invalidate(expenseSummaryProvider);
+  }
+
+  /// Settle up: mark all pending/overdue splits for a given user as paid.
+  /// Returns the number of splits settled and total amount.
+  Future<({int count, int totalCents})> settleUp({
+    required String userId,
+    String? reference,
+    String? note,
+  }) async {
+    final splits = await pb.collection('expense_splits').getFullList(
+      filter: 'user = "$userId" && status != "paid"',
+    );
+    int total = 0;
+    for (final s in splits) {
+      total += (s.data['amount_due'] as num?)?.toInt() ?? 0;
+      await pb.collection('expense_splits').update(s.id, body: {
+        'status':            'paid',
+        'paid_date':         _isoDate(DateTime.now()),
+        'payment_reference': reference ?? '',
+        'payment_note':      note ?? '',
+      });
+    }
+    ref.invalidateSelf();
+    ref.invalidate(expenseSummaryProvider);
+    return (count: splits.length, totalCents: total);
   }
 
   /// Delete an expense and its splits.

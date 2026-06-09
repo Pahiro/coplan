@@ -7,6 +7,8 @@ import '../models/shared_expense.dart';
 import '../providers/auth_provider.dart';
 import '../providers/expense_provider.dart';
 import '../providers/household_provider.dart';
+import '../providers/payment_details_provider.dart';
+import 'expense_form_screen.dart';
 
 class ExpenseDetailScreen extends ConsumerWidget {
   final SharedExpense expense;
@@ -30,6 +32,16 @@ class ExpenseDetailScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Expense Details'),
         actions: [
+          if (expense.createdBy == myId)
+            IconButton(
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: 'Edit',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => ExpenseFormScreen(existing: expense)),
+              ),
+            ),
           if (expense.createdBy == myId)
             IconButton(
               icon: const Icon(Icons.delete_outline),
@@ -107,6 +119,10 @@ class ExpenseDetailScreen extends ConsumerWidget {
               );
             },
           ),
+
+          // Payee banking details (shown to the owing parent)
+          if (expense.paidBy != null && expense.paidBy != myId)
+            _PayeeDetailsCard(userId: expense.paidBy!),
         ],
       ),
     );
@@ -269,6 +285,66 @@ class _SplitCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── Payee banking details card ───────────────────────────────────────────────
+
+class _PayeeDetailsCard extends ConsumerWidget {
+  final String userId;
+  const _PayeeDetailsCard({required this.userId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final detailsAsync = ref.watch(userPaymentDetailsProvider(userId));
+
+    return detailsAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (details) {
+        if (details == null || !details.hasDetails) return const SizedBox.shrink();
+
+        return Padding(
+          padding: const EdgeInsets.only(top: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Payment Info',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleSmall
+                      ?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (details.bankName?.isNotEmpty == true) ...[
+                        _DetailRow(Icons.account_balance, details.bankName!),
+                        if (details.accountHolder?.isNotEmpty == true)
+                          _DetailRow(Icons.person, details.accountHolder!),
+                        if (details.accountNumber?.isNotEmpty == true)
+                          _DetailRow(Icons.numbers, details.maskedAccountNumber),
+                        if (details.branchCode?.isNotEmpty == true)
+                          _DetailRow(Icons.tag, 'Branch: ${details.branchCode}'),
+                      ],
+                      if (details.paymentLink?.isNotEmpty == true)
+                        _DetailRow(Icons.link, details.paymentLink!),
+                      if (details.paymentReference?.isNotEmpty == true)
+                        _DetailRow(Icons.receipt, 'Ref: ${details.paymentReference}'),
+                      if (details.notes?.isNotEmpty == true)
+                        _DetailRow(Icons.notes, details.notes!),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

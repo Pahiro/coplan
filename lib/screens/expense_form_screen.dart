@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/shared_expense.dart';
 import '../providers/auth_provider.dart';
 import '../providers/expense_provider.dart';
 import '../providers/household_provider.dart';
 
 class ExpenseFormScreen extends ConsumerStatefulWidget {
-  const ExpenseFormScreen({super.key});
+  /// Pass an existing expense to edit; null = create new.
+  final SharedExpense? existing;
+  const ExpenseFormScreen({super.key, this.existing});
 
   @override
   ConsumerState<ExpenseFormScreen> createState() => _ExpenseFormScreenState();
@@ -25,6 +28,24 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
   String _recurrence = 'monthly';
   int? _dueDay;
   bool _saving = false;
+
+  bool get _isEditing => widget.existing != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.existing;
+    if (e != null) {
+      _titleCtrl.text  = e.title;
+      _descCtrl.text   = e.description ?? '';
+      _amountCtrl.text = e.amountInRands.toStringAsFixed(2);
+      _category    = e.category ?? 'other';
+      _childName   = e.childName;
+      _isRecurring = e.isRecurring;
+      _recurrence  = e.recurrence ?? 'monthly';
+      _dueDay      = e.dueDay;
+    }
+  }
 
   static const _categories = [
     ('education', 'Education'),
@@ -54,7 +75,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
         .firstOrNull;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('New Expense')),
+      appBar: AppBar(title: Text(_isEditing ? 'Edit Expense' : 'New Expense')),
       body: Form(
         key: _formKey,
         child: ListView(
@@ -202,7 +223,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.check),
-              label: Text(_saving ? 'Saving…' : 'Create Expense'),
+              label: Text(_saving ? 'Saving…' : (_isEditing ? 'Update Expense' : 'Create Expense')),
             ),
           ],
         ),
@@ -234,19 +255,34 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
     }
 
     try {
-      await ref.read(expensesProvider.notifier).createExpense(
-            title: _titleCtrl.text.trim(),
-            description: _descCtrl.text.trim(),
-            amount: amountCents,
-            childName: _childName,
-            category: _category,
-            isRecurring: _isRecurring,
-            recurrence: _isRecurring ? _recurrence : null,
-            dueDay: _isRecurring ? _dueDay : null,
-            nextDueDate: nextDue,
-            startDate: DateTime.now(),
-            splitToUserId: otherParentId,
-          );
+      if (_isEditing) {
+        await ref.read(expensesProvider.notifier).updateExpense(
+              expenseId: widget.existing!.id,
+              title: _titleCtrl.text.trim(),
+              description: _descCtrl.text.trim(),
+              amount: amountCents,
+              childName: _childName,
+              category: _category,
+              isRecurring: _isRecurring,
+              recurrence: _isRecurring ? _recurrence : null,
+              dueDay: _isRecurring ? _dueDay : null,
+              nextDueDate: nextDue,
+            );
+      } else {
+        await ref.read(expensesProvider.notifier).createExpense(
+              title: _titleCtrl.text.trim(),
+              description: _descCtrl.text.trim(),
+              amount: amountCents,
+              childName: _childName,
+              category: _category,
+              isRecurring: _isRecurring,
+              recurrence: _isRecurring ? _recurrence : null,
+              dueDay: _isRecurring ? _dueDay : null,
+              nextDueDate: nextDue,
+              startDate: DateTime.now(),
+              splitToUserId: otherParentId,
+            );
+      }
 
       if (mounted) Navigator.pop(context);
     } catch (e) {

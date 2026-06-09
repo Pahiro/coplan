@@ -295,3 +295,100 @@ routerAdd("POST", "/api/coplan/accept-invite", (c) => {
 
     return c.json(200, { success: true, household: householdId });
 });
+
+// ── Generate recurring expense splits ────────────────────────────────────────
+//
+// Runs daily at 00:15.  For each active recurring shared_expense whose
+// next_due_date <= today, creates a new expense_split for each existing
+// split template (copies user + split_type + split_value), then advances
+// next_due_date by the recurrence interval.
+cronAdd("generateRecurringSplits", "15 0 * * *", () => {
+    try {
+        const dao = $app.dao();
+        const now = new Date();
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+        let expenses = [];
+        try {
+            expenses = dao.findRecordsByFilter(
+                "shared_expenses",
+                'is_recurring = true && active = true && next_due_date != "" && next_due_date <= {:today}',
+                "", 500, 0, { today: todayStr }
+            );
+        } catch (_) { expenses = []; }
+
+        const splitsColl = dao.findCollectionByNameOrId("expense_splits");
+
+        for (const exp of expenses) {
+            const expId       = exp.id;
+            const amount      = exp.getInt("amount");
+            const householdId = exp.get("household");
+            const dueDay      = exp.getInt("due_day") || 1;
+            const recurrence  = exp.get("recurrence") || "monthly";
+            const endDateStr  = exp.get("end_date") || "";
+
+            // Check end date — if past, deactivate the expense
+            if (endDateStr && endDateStr <= todayStr) {
+                exp.set("active", false);
+                try { dao.saveRecord(exp); } catch (_) {}
+                continue;
+            }
+
+            // Find existing splits to use as template (most recent ones)
+            let templates = [];
+            try {
+                templates = dao.findRecordsByFilter(
+                    "expense_splits",
+                    "expense = {:eid}",
+                    "-created", 10, 0, { eid: expId }
+                );
+            } catch (_) { templates = []; }
+
+            // Deduplicate by user — only the latest split per user
+            const seen = {};
+            const uniqueTemplates = [];
+            for (const t of templates) {
+                const uid = t.get("user");
+                if (!seen[uid]) {
+                    seen[uid] = true;
+                    uniqueTemplates.push(t);
+                }
+            }
+
+            // Create new splits
+            const nextDueDate = exp.get("next_due_date");
+            for (const tmpl of uniqueTemplates) {
+                const splitType  = tmpl.get("split_type") || "percentage";
+                const splitValue = tmpl.getFloat("split_value");
+                const amountDue  = splitType === "percentage"
+                    ? Math.round(amount * splitValue / 100)
+                    : Math.round(splitValue);
+
+                const rec = new Record(splitsColl);
+                rec.set("expense",    expId);
+                rec.set("household",  householdId);
+                rec.set("user",       tmpl.get("user"));
+                rec.set("split_type", splitType);
+                rec.set("split_value", splitValue);
+                rec.set("amount_due", amountDue);
+                rec.set("status",     "pending");
+                rec.set("due_date",   nextDueDate);
+                try { dao.saveRecord(rec); } catch (_) {}
+            }
+
+            // Advance next_due_date
+            const parts = nextDueDate.split("-");
+            let y = +parts[0], m = +parts[1] - 1, d = dueDay;
+            if (recurrence === "monthly")        m += 1;
+            else if (recurrence === "quarterly") m += 3;
+            else if (recurrence === "annually")  y += 1;
+            // Normalise (JS Date handles month overflow)
+            const next = new Date(y, m, d);
+            const nextStr = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
+            exp.set("next_due_date", nextStr);
+            try { dao.saveRecord(exp); } catch (_) {}
+        }
+    } catch (err) {
+        console.log("generateRecurringSplits error:", err);
+    }
+});
