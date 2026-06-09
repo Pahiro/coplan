@@ -126,6 +126,7 @@ class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
     DateTime? startDate,
     DateTime? endDate,
     required String splitToUserId,
+    int splitPercent = 100,
   }) async {
     final auth = ref.read(authProvider).valueOrNull;
     final household = ref.read(householdProvider).valueOrNull;
@@ -160,8 +161,8 @@ class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
       'household':   householdId,
       'user':        splitToUserId,
       'split_type':  'percentage',
-      'split_value': 100,
-      'amount_due':  amount,
+      'split_value': splitPercent,
+      'amount_due':  (amount * splitPercent / 100).round(),
       'status':      'pending',
       'due_date':    nextDueDate != null ? _isoDate(nextDueDate) : '',
     });

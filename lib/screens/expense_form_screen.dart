@@ -27,6 +27,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
   bool _isRecurring = false;
   String _recurrence = 'monthly';
   int? _dueDay;
+  int _splitPercent = 100;
   bool _saving = false;
 
   bool get _isEditing => widget.existing != null;
@@ -191,26 +192,29 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
 
             const SizedBox(height: 24),
 
-            // Info about split
-            if (otherParent != null)
-              Card(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.info_outline, size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          '100% assigned to ${otherParent.displayName}',
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+            // Split percentage
+            if (otherParent != null) ...[
+              Text(
+                'Split: ${otherParent.displayName} owes $_splitPercent%',
+                style: Theme.of(context).textTheme.bodyMedium,
               ),
+              Slider(
+                value: _splitPercent.toDouble(),
+                min: 0,
+                max: 100,
+                divisions: 20,
+                label: '$_splitPercent%',
+                onChanged: (v) => setState(() => _splitPercent = v.round()),
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('0%', style: Theme.of(context).textTheme.bodySmall),
+                  Text('50%', style: Theme.of(context).textTheme.bodySmall),
+                  Text('100%', style: Theme.of(context).textTheme.bodySmall),
+                ],
+              ),
+            ],
 
             const SizedBox(height: 24),
 
@@ -281,6 +285,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
               nextDueDate: nextDue,
               startDate: DateTime.now(),
               splitToUserId: otherParentId,
+              splitPercent: _splitPercent,
             );
       }
 

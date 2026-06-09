@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-SERVER="root@192.168.1.119"
+SERVER="root@192.168.1.219"
 PB_DIR="/opt/coplan"
 PB_URL="${PB_URL:-https://coplan.vdgryp.co.za}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

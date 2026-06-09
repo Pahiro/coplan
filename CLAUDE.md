@@ -9,7 +9,7 @@ PocketBase. The live household is Bennet & Jana; the app is multi-household.
 
 ## Infra / server
 
-- **PocketBase LXC**: `root@192.168.1.119` (Debian, Proxmox). Runs from
+- **PocketBase LXC**: `root@192.168.1.219` (Debian, Proxmox). Runs from
   `/opt/coplan/` as systemd service **`coplan`**. PocketBase **v0.22.22**.
 - **Public URL**: `https://coplan.vdgryp.co.za` via a **Cloudflare tunnel**.
 - **DB**: SQLite at `/opt/coplan/pb_data/data.db` (read directly with `sqlite3`).
