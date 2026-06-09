@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../models/resolved_event.dart';
 import '../providers/absence_provider.dart';
 import '../providers/custody_provider.dart';
+import '../providers/expense_provider.dart';
 import '../providers/schedule_provider.dart';
 import '../providers/update_provider.dart';
 import '../services/notification_service.dart';
@@ -104,6 +105,7 @@ class _ScheduleList extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
       children: [
+        const _ExpenseSummaryCard(),
         _SectionLabel('Today — ${DateFormat('EEEE, d MMMM').format(today)}'),
         if (todayAbsence != null) AbsenceBanner(absence: todayAbsence),
         if (todayEvents.isEmpty)
@@ -148,6 +150,55 @@ class _EmptySlot extends StatelessWidget {
               style: TextStyle(color: Colors.grey)),
         ),
       );
+}
+
+// ── Expense summary card ──────────────────────────────────────────────────────
+
+class _ExpenseSummaryCard extends ConsumerWidget {
+  const _ExpenseSummaryCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final summary = ref.watch(expenseSummaryProvider).valueOrNull;
+    if (summary == null || summary.isEmpty) return const SizedBox.shrink();
+
+    final cs = Theme.of(context).colorScheme;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            Icon(Icons.account_balance_wallet_outlined,
+                size: 22, color: cs.primary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (summary.owedToYou > 0)
+                    Text('Owed to you: ${summary.owedToYouFormatted}',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.green.shade700)),
+                  if (summary.youOwe > 0)
+                    Text('You owe: ${summary.youOweFormatted}',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: cs.error)),
+                  if (summary.overdueCount > 0)
+                    Text('${summary.overdueCount} overdue',
+                        style: TextStyle(fontSize: 11, color: cs.error)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 

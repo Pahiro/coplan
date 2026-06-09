@@ -8,6 +8,7 @@ import 'providers/realtime_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/calendar_screen.dart';
 import 'screens/dashboard_screen.dart';
+import 'screens/expenses_screen.dart';
 import 'screens/household_setup_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/requests_screen.dart';
@@ -66,7 +67,7 @@ class _MainShell extends ConsumerStatefulWidget {
 class _MainShellState extends ConsumerState<_MainShell> {
   int _tabIndex = 0;
 
-  static const _titles = ['Today', 'Calendar'];
+  static const _titles = ['Today', 'Calendar', 'Expenses'];
 
   @override
   Widget build(BuildContext context) {
@@ -144,6 +145,7 @@ class _MainShellState extends ConsumerState<_MainShell> {
         children: const [
           DashboardScreen(),
           CalendarScreen(),
+          ExpensesScreen(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -159,6 +161,11 @@ class _MainShellState extends ConsumerState<_MainShell> {
             icon: Icon(Icons.calendar_month_outlined),
             selectedIcon: Icon(Icons.calendar_month),
             label: 'Calendar',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.account_balance_wallet_outlined),
+            selectedIcon: Icon(Icons.account_balance_wallet),
+            label: 'Expenses',
           ),
         ],
       ),
