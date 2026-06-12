@@ -16,7 +16,9 @@ import '../services/update_service.dart';
 import '../services/widget_cache_service.dart';
 import '../utils/dates.dart';
 import '../widgets/absence_banner.dart';
+import '../widgets/motion.dart';
 import '../widgets/new_action_sheet.dart';
+import '../widgets/skeleton.dart';
 import '../widgets/timeline_card.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
@@ -66,7 +68,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
             child: RefreshIndicator(
               onRefresh: _refresh,
               child: dashboard.when(
-                loading: () => const Center(child: CircularProgressIndicator()),
+                loading: () => const SkeletonList(count: 5, itemHeight: 84),
                 error: (e, _) =>
                     Center(child: Text('Error loading schedule: $e')),
                 data: (events) => _ScheduleList(events: events),
@@ -102,28 +104,36 @@ class _ScheduleList extends ConsumerWidget {
     final todayEvents    = events.where((e) => sameDay(e.date, today)).toList();
     final tomorrowEvents = events.where((e) => sameDay(e.date, tomorrow)).toList();
 
-    return ListView(
+    // Staggered entrance: cards cascade in with a subtle fade + rise.
+    var position = 0;
+    Widget item(Widget child) =>
+        staggeredItem(context, position: position++, child: child);
+
+    return AnimationLimiter(
+        child: ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
       children: [
-        const _ExpenseSummaryCard(),
-        _SectionLabel('Today — ${DateFormat('EEEE, d MMMM').format(today)}',
-            date: today),
-        if (todayAbsence != null) AbsenceBanner(absence: todayAbsence),
+        item(const _ExpenseSummaryCard()),
+        item(_SectionLabel(
+            'Today — ${DateFormat('EEEE, d MMMM').format(today)}',
+            date: today)),
+        if (todayAbsence != null) item(AbsenceBanner(absence: todayAbsence)),
         if (todayEvents.isEmpty)
-          const _EmptySlot()
+          item(const _EmptySlot())
         else
-          ...todayEvents.map((e) => TimelineCard(event: e)),
+          ...todayEvents.map((e) => item(TimelineCard(event: e))),
         const SizedBox(height: 20),
-        _SectionLabel(
+        item(_SectionLabel(
             'Tomorrow — ${DateFormat('EEEE, d MMMM').format(tomorrow)}',
-            date: tomorrow),
-        if (tomorrowAbsence != null) AbsenceBanner(absence: tomorrowAbsence),
+            date: tomorrow)),
+        if (tomorrowAbsence != null)
+          item(AbsenceBanner(absence: tomorrowAbsence)),
         if (tomorrowEvents.isEmpty)
-          const _EmptySlot()
+          item(const _EmptySlot())
         else
-          ...tomorrowEvents.map((e) => TimelineCard(event: e)),
+          ...tomorrowEvents.map((e) => item(TimelineCard(event: e))),
       ],
-    );
+    ));
   }
 }
 
@@ -152,22 +162,27 @@ class _SectionLabel extends ConsumerWidget {
                     .titleMedium
                     ?.copyWith(fontWeight: FontWeight.bold)),
           ),
-          if (owner != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: colors.parentLightColor(owner),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                '$owner has the kids',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: colors.parentColor(owner),
-                ),
-              ),
-            ),
+          CrossFadeSwitcher(
+            child: owner == null
+                ? const SizedBox.shrink(key: ValueKey('no-owner'))
+                : Container(
+                    key: ValueKey(owner),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: colors.parentLightColor(owner),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '$owner has the kids',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: colors.parentColor(owner),
+                      ),
+                    ),
+                  ),
+          ),
         ],
       ),
     );
@@ -216,16 +231,22 @@ class _ExpenseSummaryCard extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Net first — the number one actually settles.
+                  // Net first — the number one actually settles. Counts
+                  // up/down to its new value when the balance changes.
                   if (net != 0)
-                    Text(
-                      net > 0
-                          ? 'Net: you are owed ${summary.netFormatted}'
-                          : 'Net: you owe ${summary.netFormatted}',
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: net > 0 ? positive : cs.error),
+                    TweenAnimationBuilder<double>(
+                      tween: Tween(begin: 0, end: net.abs() / 100),
+                      duration: const Duration(milliseconds: 600),
+                      curve: Curves.easeOutCubic,
+                      builder: (_, value, __) => Text(
+                        net > 0
+                            ? 'Net: you are owed R ${value.toStringAsFixed(2)}'
+                            : 'Net: you owe R ${value.toStringAsFixed(2)}',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: net > 0 ? positive : cs.error),
+                      ),
                     ),
                   if (summary.owedToYou > 0 && summary.youOwe > 0)
                     Text(

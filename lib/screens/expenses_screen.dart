@@ -1,3 +1,4 @@
+import 'package:animations/animations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -5,6 +6,7 @@ import '../core/expense_categories.dart';
 import '../models/shared_expense.dart';
 import '../providers/expense_provider.dart';
 import '../providers/household_provider.dart';
+import '../widgets/skeleton.dart';
 import 'expense_detail_screen.dart';
 import 'expense_form_screen.dart';
 
@@ -118,7 +120,7 @@ class _ExpensesScreenState extends ConsumerState<ExpensesScreen> {
           ),
           Expanded(
             child: expensesAsync.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
+              loading: () => const SkeletonList(count: 6, itemHeight: 72),
               error: (e, _) => Center(child: Text('Error loading expenses: $e')),
               data: (expenses) {
                 // Apply filters
@@ -222,30 +224,35 @@ class _ExpenseTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: cs.primaryContainer,
-          child: Icon(ExpenseCategory.iconFor(expense.category),
-              color: cs.onPrimaryContainer, size: 20),
-        ),
-        title: Text(expense.title),
-        subtitle: Text(
-          [
-            expense.formattedAmount,
-            if (expense.isRecurring) expense.recurrence ?? 'recurring',
-            if (expense.childName != 'All') expense.childName,
-          ].join(' · '),
-          style: const TextStyle(fontSize: 12),
-        ),
-        trailing: expense.active
-            ? null
-            : const Icon(Icons.check_circle, color: Colors.green, size: 20),
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-              builder: (_) => ExpenseDetailScreen(expenseId: expense.id)),
+    // Container transform: the tile itself expands into the detail screen.
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: OpenContainer(
+        transitionDuration: const Duration(milliseconds: 350),
+        closedElevation: 1,
+        closedColor: cs.surfaceContainerLow,
+        closedShape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        openBuilder: (_, __) => ExpenseDetailScreen(expenseId: expense.id),
+        closedBuilder: (_, open) => ListTile(
+          leading: CircleAvatar(
+            backgroundColor: cs.primaryContainer,
+            child: Icon(ExpenseCategory.iconFor(expense.category),
+                color: cs.onPrimaryContainer, size: 20),
+          ),
+          title: Text(expense.title),
+          subtitle: Text(
+            [
+              expense.formattedAmount,
+              if (expense.isRecurring) expense.recurrence ?? 'recurring',
+              if (expense.childName != 'All') expense.childName,
+            ].join(' · '),
+            style: const TextStyle(fontSize: 12),
+          ),
+          trailing: expense.active
+              ? null
+              : const Icon(Icons.check_circle, color: Colors.green, size: 20),
+          onTap: open,
         ),
       ),
     );

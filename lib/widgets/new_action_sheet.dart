@@ -12,6 +12,7 @@ Future<void> showNewActionSheet(BuildContext context,
     {DateTime? initialDate}) {
   return showModalBottomSheet<void>(
     context: context,
+    showDragHandle: true,
     shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
     builder: (_) => _NewActionSheet(initialDate: initialDate),

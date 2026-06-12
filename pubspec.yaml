@@ -1,7 +1,7 @@
 name: coplan
 description: Co-parenting logistics planner for Bennet & Jana.
 publish_to: 'none'
-version: 3.0.0+55
+version: 3.1.0+56
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -31,6 +31,10 @@ dependencies:
   intl: ^0.19.0
   collection: ^1.18.0
   http: ^1.2.0
+
+  # Motion (Material shared-axis / fade-through / container transforms)
+  animations: ^2.0.11
+  flutter_staggered_animations: ^1.1.1
 
   # Receipt photos on expenses
   image_picker: ^1.1.2

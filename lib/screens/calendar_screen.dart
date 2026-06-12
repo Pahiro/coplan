@@ -1,3 +1,4 @@
+import 'package:animations/animations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -7,6 +8,7 @@ import '../providers/schedule_provider.dart';
 import '../utils/dates.dart';
 import '../widgets/absence_banner.dart';
 import '../widgets/month_grid.dart';
+import '../widgets/motion.dart';
 import '../widgets/new_action_sheet.dart';
 import '../widgets/timeline_card.dart';
 import '../widgets/week_strip.dart';
@@ -23,6 +25,8 @@ class CalendarScreen extends ConsumerStatefulWidget {
 class _CalendarScreenState extends ConsumerState<CalendarScreen> {
   late DateTime _selectedDay;
   _ViewMode _viewMode = _ViewMode.week;
+  // Drives the slide direction of the strip/grid transition.
+  bool _navReverse = false;
 
   @override
   void initState() {
@@ -33,6 +37,7 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
   // ── Navigation ────────────────────────────────────────────────────────────
 
   void _prev() => setState(() {
+        _navReverse = true;
         if (_viewMode == _ViewMode.week) {
           _selectedDay = _selectedDay.subtract(const Duration(days: 7));
         } else {
@@ -42,6 +47,7 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
       });
 
   void _next() => setState(() {
+        _navReverse = false;
         if (_viewMode == _ViewMode.week) {
           _selectedDay = _selectedDay.add(const Duration(days: 7));
         } else {
@@ -50,7 +56,10 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
         }
       });
 
-  void _goToToday() => setState(() => _selectedDay = DateTime.now());
+  void _goToToday() => setState(() {
+        _navReverse = DateTime.now().isBefore(_selectedDay);
+        _selectedDay = DateTime.now();
+      });
 
   // ── Labels ───────────────────────────────────────────────────────────────
 
@@ -145,22 +154,42 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
           ),
         ),
         // ── Strip / grid (horizontal swipe changes week/month) ─────────────
+        // Weeks/months slide in from the direction of travel; selecting a day
+        // within the same period doesn't re-animate (key stays stable).
         GestureDetector(
           onHorizontalDragEnd: _onSwipe,
-          child: _viewMode == _ViewMode.week
-              ? WeekStrip(
-                  weekStart: monday,
-                  selectedDay: _selectedDay,
-                  onDaySelected: (d) => setState(() => _selectedDay = d),
-                )
-              : Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: MonthGrid(
-                    month: DateTime(_selectedDay.year, _selectedDay.month),
-                    selectedDay: _selectedDay,
-                    onDaySelected: (d) => setState(() => _selectedDay = d),
-                  ),
-                ),
+          child: PageTransitionSwitcher(
+            duration: const Duration(milliseconds: 300),
+            reverse: _navReverse,
+            transitionBuilder: (child, animation, secondaryAnimation) =>
+                SharedAxisTransition(
+              animation: animation,
+              secondaryAnimation: secondaryAnimation,
+              transitionType: SharedAxisTransitionType.horizontal,
+              fillColor: Colors.transparent,
+              child: child,
+            ),
+            child: KeyedSubtree(
+              key: ValueKey(_viewMode == _ViewMode.week
+                  ? 'week-${isoDate(monday)}'
+                  : 'month-${_selectedDay.year}-${_selectedDay.month}'),
+              child: _viewMode == _ViewMode.week
+                  ? WeekStrip(
+                      weekStart: monday,
+                      selectedDay: _selectedDay,
+                      onDaySelected: (d) => setState(() => _selectedDay = d),
+                    )
+                  : Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: MonthGrid(
+                        month: DateTime(_selectedDay.year, _selectedDay.month),
+                        selectedDay: _selectedDay,
+                        onDaySelected: (d) =>
+                            setState(() => _selectedDay = d),
+                      ),
+                    ),
+            ),
+          ),
         ),
         const Divider(height: 1),
         // ── Selected day label ─────────────────────────────────────────────
@@ -184,30 +213,39 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
           if (absence == null) return const SizedBox.shrink();
           return AbsenceBanner(absence: absence);
         }),
-        // ── Day events ─────────────────────────────────────────────────────
+        // ── Day events (cross-fades when a different day is selected) ──────
         Expanded(
-          child: weekEvents.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => Center(child: Text('Error: $e')),
-            data: (_) {
-              if (selectedEvents.isEmpty) {
-                return const Center(
-                  child: Text('No events this day',
-                      style: TextStyle(color: Colors.grey)),
-                );
-              }
-              return RefreshIndicator(
-                onRefresh: () async =>
-                    ref.invalidate(weekEventsProvider(monday)),
-                child: ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
-                  itemCount: selectedEvents.length,
-                  separatorBuilder: (_, __) => const SizedBox.shrink(),
-                  itemBuilder: (_, i) =>
-                      TimelineCard(event: selectedEvents[i]),
-                ),
-              );
-            },
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: KeyedSubtree(
+              key: ValueKey(isoDate(_selectedDay)),
+              child: weekEvents.when(
+                loading: () =>
+                    const Center(child: CircularProgressIndicator()),
+                error: (e, _) => Center(child: Text('Error: $e')),
+                data: (_) {
+                  if (selectedEvents.isEmpty) {
+                    return const Center(
+                      child: Text('No events this day',
+                          style: TextStyle(color: Colors.grey)),
+                    );
+                  }
+                  return RefreshIndicator(
+                    onRefresh: () async =>
+                        ref.invalidate(weekEventsProvider(monday)),
+                    child: AnimationLimiter(
+                      child: ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
+                        itemCount: selectedEvents.length,
+                        itemBuilder: (ctx, i) => staggeredItem(ctx,
+                            position: i,
+                            child: TimelineCard(event: selectedEvents[i])),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
           ),
         ),
       ],

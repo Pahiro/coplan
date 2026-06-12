@@ -1,3 +1,4 @@
+import 'package:animations/animations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -16,6 +17,7 @@ import 'screens/requests_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/notification_service.dart';
 import 'widgets/common.dart';
+import 'widgets/motion.dart';
 
 class CoplanApp extends ConsumerWidget {
   const CoplanApp({super.key});
@@ -27,6 +29,15 @@ class CoplanApp extends ConsumerWidget {
 
     const seed = Color(0xFF1565C0);
 
+    // Shared-axis push/pop on every route — the single biggest "feels modern"
+    // change. Applied per platform so web/desktop match Android.
+    final transitions = PageTransitionsTheme(builders: {
+      for (final platform in TargetPlatform.values)
+        platform: const SharedAxisPageTransitionsBuilder(
+          transitionType: SharedAxisTransitionType.horizontal,
+        ),
+    });
+
     return MaterialApp(
       scaffoldMessengerKey: NotificationService.messengerKey,
       title: 'CoPlan',
@@ -35,6 +46,7 @@ class CoplanApp extends ConsumerWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: seed),
         useMaterial3: true,
+        pageTransitionsTheme: transitions,
       ),
       darkTheme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
@@ -42,6 +54,7 @@ class CoplanApp extends ConsumerWidget {
           brightness: Brightness.dark,
         ),
         useMaterial3: true,
+        pageTransitionsTheme: transitions,
       ),
       home: auth.when(
         loading: () => const Scaffold(
@@ -154,7 +167,7 @@ class _MainShellState extends ConsumerState<_MainShell> {
           ),
         ],
       ),
-      body: IndexedStack(
+      body: FadeThroughIndexedStack(
         index: _tabIndex,
         children: const [
           DashboardScreen(),

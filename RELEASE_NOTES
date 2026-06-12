@@ -1,5 +1,5 @@
-CoPlan 3.0 — a big quality release.
-• Money: net balance at a glance, one-tap settle-up in both directions, receipt photos on expenses, and notifications when your co-parent adds an expense or records a payment.
-• Schedule: the dashboard now shows who has the kids today and tomorrow, the calendar supports swiping between weeks/months, and new requests pre-fill the selected day.
-• Requests: see past requests, and add a reason when declining.
-• Join by invite link, friendlier error messages, dark-mode polish, and many fixes — including events saving correctly while typing and expense details updating after edits.
+CoPlan 3.1 — a smoother, more modern feel.
+• Screens now glide instead of snap: animated page transitions, smooth tab switching, and expenses that expand from their card into the detail view.
+• The calendar slides in the direction you navigate, and the day panel cross-fades when you pick a different day.
+• Schedule cards cascade in gently, loading screens show content-shaped placeholders instead of a spinner, and your net balance counts up to its value.
+• Bottom sheets gained drag handles. All motion is quick (under a third of a second) and respects your phone's reduce-motion setting.

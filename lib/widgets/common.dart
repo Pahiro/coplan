@@ -38,23 +38,26 @@ Future<bool> confirmDialog(
   return result ?? false;
 }
 
-/// The app-standard modal bottom sheet: rounded top, keyboard-aware.
+/// The app-standard modal bottom sheet: rounded top, drag handle,
+/// keyboard-aware.
 Future<T?> showAppSheet<T>(BuildContext context,
     {required WidgetBuilder builder}) {
   return showModalBottomSheet<T>(
     context: context,
     isScrollControlled: true,
+    showDragHandle: true,
     shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
     builder: builder,
   );
 }
 
-/// Standard content padding for bottom sheets (keyboard-aware).
+/// Standard content padding for bottom sheets (keyboard-aware). Top is small
+/// because [showAppSheet] renders a drag handle above the content.
 EdgeInsets sheetPadding(BuildContext context) => EdgeInsets.only(
       left: 24,
       right: 24,
-      top: 24,
+      top: 8,
       bottom: MediaQuery.of(context).viewInsets.bottom + 24,
     );
 
