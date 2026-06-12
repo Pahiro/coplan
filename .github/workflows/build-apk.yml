@@ -37,22 +37,37 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
+      # Releases are tagged from the pubspec version (e.g. v3.0.0), so pushes
+      # without a version bump update the existing release instead of piling
+      # up meaningless "Build N" entries.
+      - name: Read version from pubspec
+        id: version
+        run: |
+          FULL=$(grep '^version:' pubspec.yaml | sed 's/version: //' | tr -d '\r ')
+          echo "name=${FULL%+*}" >> "$GITHUB_OUTPUT"
+          echo "code=${FULL#*+}" >> "$GITHUB_OUTPUT"
+
       - name: Build APK
         run: flutter build apk --release --dart-define=PB_URL=https://coplan.vdgryp.co.za
+
+      - name: Rename APK with version
+        run: cp build/app/outputs/flutter-apk/app-release.apk
+          "coplan-v${{ steps.version.outputs.name }}.apk"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: coplan-release
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: coplan-v${{ steps.version.outputs.name }}.apk
 
       - name: Create Release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Build ${{ github.run_number }}
-          files: build/app/outputs/flutter-apk/app-release.apk
-          generate_release_notes: true
+          tag_name: v${{ steps.version.outputs.name }}
+          name: CoPlan v${{ steps.version.outputs.name }} (build ${{ steps.version.outputs.code }})
+          files: coplan-v${{ steps.version.outputs.name }}.apk
+          body_path: RELEASE_NOTES
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
