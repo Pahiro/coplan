@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/pb_client.dart';
 import '../models/app_colors.dart';
-import '../models/household.dart';
 import 'household_provider.dart';
 
 /// Default parent colours when we can't resolve from household data.
@@ -67,7 +66,7 @@ class ColorsNotifier extends AsyncNotifier<AppColors> {
   Future<void> updateMyColor(Color color) async {
     final userId = pb.authStore.record?.id;
     if (userId == null) return;
-    final hex = '#${color.value.toRadixString(16).substring(2).toUpperCase()}';
+    final hex = '#${color.toARGB32().toRadixString(16).substring(2).toUpperCase()}';
 
     // Update user record (for personal reference)
     await pb.collection('users').update(userId, body: {'preferred_color': hex});
@@ -90,7 +89,7 @@ class ColorsNotifier extends AsyncNotifier<AppColors> {
 
   /// Update a child's colour in the children collection.
   Future<void> updateChildColor(String childId, Color color) async {
-    final hex = '#${color.value.toRadixString(16).substring(2).toUpperCase()}';
+    final hex = '#${color.toARGB32().toRadixString(16).substring(2).toUpperCase()}';
     await pb.collection('children').update(childId, body: {'color': hex});
     // Invalidate household so child data is re-fetched with new colour
     ref.invalidate(householdProvider);

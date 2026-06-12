@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../models/custody_request.dart';
 import '../providers/auth_provider.dart';
 import '../providers/custody_provider.dart';
+import 'common.dart';
 import 'custody_request_edit_sheet.dart';
 
 class CustodyRequestTile extends ConsumerWidget {
@@ -17,25 +18,48 @@ class CustodyRequestTile extends ConsumerWidget {
     required this.myId,
   });
 
-  Future<bool> _confirm(BuildContext context,
-      {required String title, required String body}) async {
-    return await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: Text(title),
-            content: Text(body),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Cancel')),
-              TextButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  style: TextButton.styleFrom(foregroundColor: Colors.red),
-                  child: const Text('Delete')),
-            ],
+  /// Declining without context invites a phone call — offer an optional note
+  /// so the reason travels with the request.
+  Future<void> _decline(BuildContext context, WidgetRef ref) async {
+    final noteCtrl = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Decline request?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: noteCtrl,
+              autofocus: true,
+              maxLines: 2,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                labelText: 'Reason (optional)',
+                hintText: 'e.g. We have a family lunch that day',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(ctx).colorScheme.error),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Decline'),
           ),
-        ) ??
-        false;
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await ref
+          .read(custodyRequestsProvider.notifier)
+          .respond(request.id, accept: false, note: noteCtrl.text);
+    }
   }
 
   String _pickupLabel(String myName) {
@@ -129,19 +153,15 @@ class CustodyRequestTile extends ConsumerWidget {
                     padding: EdgeInsets.zero,
                     onSelected: (action) async {
                       if (action == _TileAction.edit) {
-                        await showModalBottomSheet<void>(
-                          context: context,
-                          isScrollControlled: true,
-                          shape: const RoundedRectangleBorder(
-                              borderRadius: BorderRadius.vertical(
-                                  top: Radius.circular(20))),
-                          builder: (_) =>
-                              CustodyRequestEditSheet(request: request),
-                        );
+                        await showAppSheet<void>(context,
+                            builder: (_) =>
+                                CustodyRequestEditSheet(request: request));
                       } else {
-                        final ok = await _confirm(context,
+                        final ok = await confirmDialog(context,
                             title: 'Delete request?',
-                            body: 'This cannot be undone.');
+                            body: 'This cannot be undone.',
+                            action: 'Delete',
+                            destructive: true);
                         if (ok && context.mounted) {
                           await ref
                               .read(custodyRequestsProvider.notifier)
@@ -206,9 +226,7 @@ class CustodyRequestTile extends ConsumerWidget {
                       style: OutlinedButton.styleFrom(
                           foregroundColor: Colors.red,
                           side: const BorderSide(color: Colors.red)),
-                      onPressed: () => ref
-                          .read(custodyRequestsProvider.notifier)
-                          .respond(request.id, accept: false),
+                      onPressed: () => _decline(context, ref),
                       icon: const Icon(Icons.close, size: 16),
                       label: const Text('Decline'),
                     ),

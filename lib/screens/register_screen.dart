@@ -4,12 +4,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/pb_client.dart';
 import '../providers/auth_provider.dart';
+import '../providers/household_provider.dart';
+import '../providers/invite_provider.dart';
+import '../widgets/server_url_field.dart';
 
 /// Registration screen — creates a new PocketBase user account.
-/// After successful registration the user is logged in automatically
-/// and routed to the household setup wizard.
+///
+/// If [inviteCode] is provided (from a deep link or URL param), the account is
+/// automatically joined to the invited household immediately after registration.
 class RegisterScreen extends ConsumerStatefulWidget {
-  const RegisterScreen({super.key});
+  final String? inviteCode;
+  const RegisterScreen({super.key, this.inviteCode});
 
   @override
   ConsumerState<RegisterScreen> createState() => _RegisterScreenState();
@@ -22,7 +27,6 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _passCtrl  = TextEditingController();
   final _urlCtrl   = TextEditingController();
   bool _obscure = true;
-  bool _showUrl = false;
 
   @override
   void initState() {
@@ -60,13 +64,22 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       name:     _nameCtrl.text.trim(),
     );
 
-    // On success the app's home rebuilds to the household setup wizard, but this
-    // RegisterScreen is pushed on top of the login screen — pop it so the new
-    // home is revealed instead of leaving the user staring at the form.
     if (!mounted) return;
     final auth = ref.read(authProvider);
     if (!auth.hasError && (auth.valueOrNull?.isLoggedIn ?? false)) {
-      Navigator.of(context).pop();
+      // If an invite code is present, auto-accept it now so the user lands
+      // directly in the app without seeing the household setup wizard.
+      final code = widget.inviteCode ?? ref.read(pendingInviteProvider);
+      if (code != null) {
+        try {
+          await ref.read(householdProvider.notifier).acceptInvite(code);
+          ref.read(pendingInviteProvider.notifier).state = null;
+        } catch (e) {
+          // Invite acceptance failed — user will land on household setup where
+          // they can try the code again.
+        }
+      }
+      if (mounted) Navigator.of(context).pop();
     }
   }
 
@@ -75,6 +88,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     final auth = ref.watch(authProvider);
     final isLoading = auth.isLoading;
     final errorMsg = auth.hasError ? auth.error.toString() : null;
+    final inviteCode = widget.inviteCode ?? ref.watch(pendingInviteProvider);
 
     return Scaffold(
       body: SafeArea(
@@ -92,51 +106,52 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                   Text('Create Account',
                       style: Theme.of(context).textTheme.headlineLarge),
                   const SizedBox(height: 4),
-                  Text('Join CoPlan to coordinate your family schedule',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: Colors.grey,
-                          )),
-                  const SizedBox(height: 16),
-                  // Server URL (collapsible)
-                  GestureDetector(
-                    onTap: () => setState(() => _showUrl = !_showUrl),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.dns_outlined, size: 14, color: Colors.grey[600]),
-                        const SizedBox(width: 4),
-                        Text(
-                          _showUrl ? 'Hide server URL' : 'Server URL',
-                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  Text(
+                    inviteCode != null
+                        ? "You'll be joined to your family after sign-up."
+                        : 'Join CoPlan to coordinate your family schedule',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Colors.grey,
                         ),
-                        Icon(
-                          _showUrl ? Icons.expand_less : Icons.expand_more,
-                          size: 16, color: Colors.grey[600],
-                        ),
-                      ],
-                    ),
+                    textAlign: TextAlign.center,
                   ),
-                  if (_showUrl) ...[
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      controller: _urlCtrl,
-                      keyboardType: TextInputType.url,
-                      textInputAction: TextInputAction.next,
-                      decoration: const InputDecoration(
-                        labelText: 'PocketBase URL',
-                        hintText: 'http://192.168.1.100:8090',
-                        prefixIcon: Icon(Icons.link),
-                        border: OutlineInputBorder(),
-                        isDense: true,
+
+                  // Invite badge
+                  if (inviteCode != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(20),
                       ),
-                      validator: (v) {
-                        if (v == null || v.isEmpty) return 'Server URL required';
-                        final uri = Uri.tryParse(v);
-                        if (uri == null || !uri.hasScheme) return 'Enter a valid URL';
-                        return null;
-                      },
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.link,
+                              size: 14,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onPrimaryContainer),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Invite: $inviteCode',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onPrimaryContainer,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
+
+                  const SizedBox(height: 16),
+                  ServerUrlField(controller: _urlCtrl),
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: _nameCtrl,

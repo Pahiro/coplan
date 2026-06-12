@@ -1,23 +1,20 @@
-import 'dart:io';
-
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:path_provider/path_provider.dart';
-
-import '../utils/csv_download_stub.dart'
-    if (dart.library.html) '../utils/csv_download_web.dart';
 
 import '../core/pb_client.dart';
-import '../engine/resolution_engine.dart';
+import '../engine/engine_factory.dart';
 import '../models/custody_request.dart';
 import '../models/manual_override.dart';
 import '../providers/absence_provider.dart';
 import '../providers/holiday_provider.dart';
 import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
+import '../utils/csv_export.dart';
+import '../utils/dates.dart';
+import '../widgets/common.dart';
 
 /// Export schedule data as CSV — supports both historical and future dates.
 class ExportScreen extends ConsumerStatefulWidget {
@@ -65,39 +62,18 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     try {
       final csv = await _generateCsv();
       final dateStr = DateFormat('yyyyMMdd').format(DateTime.now());
-      final fileName = 'coplan_export_$dateStr.csv';
-      if (kIsWeb) {
-        downloadCsvOnWeb(csv, fileName);
-        setState(() => _resultPath = fileName);
-      } else {
-        final dir = await getApplicationDocumentsDirectory();
-        final file = File('${dir.path}/$fileName');
-        await file.writeAsString(csv);
-        setState(() => _resultPath = file.path);
-      }
+      final path =
+          await saveCsv(csv: csv, fileName: 'coplan_export_$dateStr.csv');
+      setState(() => _resultPath = path);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Export failed: $e')),
-        );
-      }
+      if (mounted) showErrorSnack(context, e);
     } finally {
       setState(() => _exporting = false);
     }
   }
 
-  String _fmtDate(DateTime d) =>
-      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-
   Future<String> _generateCsv() async {
-    final household = ref.read(householdProvider).valueOrNull;
-    final anchor = household?.rotationAnchorDate ?? DateTime(2025, 1, 6);
-    final evenName = household?.rotationParentEvenName ?? 'Parent A';
-    final oddName = household?.rotationParentOddName ?? 'Parent B';
-    final scheme = household?.rotationScheme;
-    final mode = household?.mode ?? 'custody';
-
-    final rules = ref.read(baseRulesProvider).valueOrNull ?? const [];
+    final rules        = ref.read(baseRulesProvider).valueOrNull ?? const [];
     final weekdayRules = ref.read(weekdayRulesProvider).valueOrNull ?? const [];
     final recurring =
         ref.read(recurringArrangementsProvider).valueOrNull ?? const [];
@@ -108,8 +84,8 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
 
     final start = _range!.start;
     final end = _range!.end;
-    final startStr = _fmtDate(start);
-    final endStr = _fmtDate(end);
+    final startStr = isoDate(start);
+    final endStr = isoDate(end);
 
     final overrideRecords = await pb.collection('manual_overrides').getFullList(
         filter: 'target_date >= "$startStr" && target_date <= "$endStr"');
@@ -124,50 +100,29 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
         .map((r) => CustodyRequest.fromRecord(r.toJson()))
         .toList();
 
+    // One engine for the whole range — it filters by date internally.
+    final engine = buildEngine(
+      household:             ref.read(householdProvider).valueOrNull,
+      baseRules:             rules,
+      overrides:             allOverrides,
+      custodyRequests:       allCustody,
+      weekdayRules:          weekdayRules,
+      recurringArrangements: recurring,
+      absencePeriods:        allAbsences,
+      holidayBlocks:         allHolidays,
+    );
+
     final buf = StringBuffer();
     buf.writeln(
         'Date,Weekday,Day Owner,Time,Activity,Child,Location,Parent,Type,Shared');
 
     final days = end.difference(start).inDays + 1;
-    final fmt = DateFormat('yyyy-MM-dd');
     final dayFmt = DateFormat('EEEE');
 
     for (int i = 0; i < days; i++) {
       final date = start.add(Duration(days: i));
-      final dateStr = fmt.format(date);
+      final dateStr = isoDate(date);
       final weekday = dayFmt.format(date);
-
-      final dayOverrides = allOverrides
-          .where((o) =>
-              o.targetDate.year == date.year &&
-              o.targetDate.month == date.month &&
-              o.targetDate.day == date.day)
-          .toList();
-      final dayCustody = allCustody
-          .where((r) =>
-              r.date.year == date.year &&
-              r.date.month == date.month &&
-              r.date.day == date.day)
-          .toList();
-      final dayAbsences =
-          allAbsences.where((a) => a.coversDate(date)).toList();
-      final dayHolidays =
-          allHolidays.where((b) => b.coversDate(date)).toList();
-
-      final engine = ResolutionEngine(
-        baseRules: rules,
-        overrides: dayOverrides,
-        custodyRequests: dayCustody,
-        weekdayRules: weekdayRules,
-        recurringArrangements: recurring,
-        absencePeriods: dayAbsences,
-        holidayBlocks: dayHolidays,
-        rotationAnchor: anchor,
-        rotationParentEven: evenName,
-        rotationParentOdd: oddName,
-        rotationScheme: scheme,
-        householdMode: mode,
-      );
 
       final dayOwner = engine.dayOwner(date);
       final events = engine.resolveDay(date);
@@ -177,17 +132,15 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
         buf.writeln('$dateStr,$weekday,$dayOwner,,,,,,');
       } else {
         for (final e in events) {
-          final time = '${e.time.hour.toString().padLeft(2, '0')}:'
-              '${e.time.minute.toString().padLeft(2, '0')}';
           final type = e.custodyRequestId != null
               ? 'transfer'
               : e.isAdhoc
                   ? 'adhoc'
                   : 'scheduled';
           buf.writeln(
-            '$dateStr,$weekday,$dayOwner,$time,'
-            '${_esc(e.activity)},${_esc(e.childName)},'
-            '${_esc(e.location)},${_esc(e.assignedParent)},'
+            '$dateStr,$weekday,$dayOwner,${fmtTime(e.time)},'
+            '${csvEscape(e.activity)},${csvEscape(e.childName)},'
+            '${csvEscape(e.location)},${csvEscape(e.assignedParent)},'
             '$type,${e.isShared ? "Yes" : "No"}',
           );
         }
@@ -196,17 +149,10 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
     return buf.toString();
   }
 
-  /// Escape a CSV field (wrap in quotes if it contains comma/newline/quote).
-  String _esc(String s) {
-    if (s.contains(',') || s.contains('"') || s.contains('\n')) {
-      return '"${s.replaceAll('"', '""')}"';
-    }
-    return s;
-  }
-
   @override
   Widget build(BuildContext context) {
     final fmt = DateFormat('d MMM yyyy');
+    final cs = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('Export Schedule')),
       body: Padding(
@@ -226,7 +172,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
               style: Theme.of(context)
                   .textTheme
                   .bodySmall
-                  ?.copyWith(color: Colors.grey),
+                  ?.copyWith(color: cs.onSurfaceVariant),
             ),
             const SizedBox(height: 24),
             // Date range picker
@@ -246,25 +192,16 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
               ),
             ),
             const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: _exporting ? null : _export,
-                icon: _exporting
-                    ? const SizedBox(
-                        height: 18,
-                        width: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Icon(Icons.download),
-                label: Text(_exporting ? 'Exporting…' : 'Export CSV'),
-              ),
+            BusyButton(
+              busy: _exporting,
+              onPressed: _export,
+              icon: const Icon(Icons.download),
+              child: Text(_exporting ? 'Exporting…' : 'Export CSV'),
             ),
             if (_resultPath != null) ...[
               const SizedBox(height: 24),
               Card(
-                color: Colors.green[50],
+                color: cs.surfaceContainerHighest,
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
@@ -272,14 +209,14 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.check_circle, color: Colors.green[700]),
+                          const Icon(Icons.check_circle, color: Colors.green),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               'Export complete!',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
-                                color: Colors.green[700],
+                                color: cs.onSurface,
                               ),
                             ),
                           ),
@@ -287,7 +224,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        kIsWeb ? _resultPath! : _resultPath!,
+                        _resultPath!,
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       if (!kIsWeb) ...[

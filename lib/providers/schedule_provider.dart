@@ -2,15 +2,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pocketbase/pocketbase.dart';
 
 import '../core/pb_client.dart';
-import '../engine/resolution_engine.dart';
-import '../models/absence_period.dart';
+import '../engine/engine_factory.dart';
 import '../models/base_rule.dart';
 import '../models/custody_request.dart';
-import '../models/holiday_block.dart';
 import '../models/manual_override.dart';
 import '../models/recurring_arrangement.dart';
 import '../models/resolved_event.dart';
 import '../models/weekday_rule.dart';
+import '../utils/dates.dart';
 import 'absence_provider.dart';
 import 'holiday_provider.dart';
 import 'household_provider.dart';
@@ -56,7 +55,7 @@ final recurringArrangementsProvider =
 final resolvedDayProvider =
     FutureProvider.family<List<ResolvedEvent>, DateTime>((ref, rawDate) async {
   final date    = DateTime(rawDate.year, rawDate.month, rawDate.day);
-  final dateStr = _fmt(date);
+  final dateStr = isoDate(date);
 
   final rules        = await ref.watch(baseRulesProvider.future);
   final weekdayRules = await ref.watch(weekdayRulesProvider.future);
@@ -75,29 +74,17 @@ final resolvedDayProvider =
       custodyRecords.map((r) => CustodyRequest.fromRecord(r.toJson())).toList();
 
   final allAbsences = await ref.watch(absencePeriodsProvider.future);
-  final absences    = allAbsences.where((a) => a.coversDate(date)).toList();
-
   final allHolidays = await ref.watch(holidayBlocksProvider.future);
-  final holidays    = allHolidays.where((b) => b.coversDate(date)).toList();
 
-  final household = ref.watch(householdProvider).valueOrNull;
-  final anchor    = household?.rotationAnchorDate ?? DateTime(2025, 1, 6);
-  final evenName  = household?.rotationParentEvenName ?? 'Bennet';
-  final oddName   = household?.rotationParentOddName  ?? 'Jana';
-
-  return ResolutionEngine(
+  return buildEngine(
+    household:             ref.watch(householdProvider).valueOrNull,
     baseRules:             rules,
     overrides:             overrides,
     custodyRequests:       custodyRequests,
     weekdayRules:          weekdayRules,
     recurringArrangements: recurring,
-    absencePeriods:        absences,
-    holidayBlocks:         holidays,
-    rotationAnchor:        anchor,
-    rotationParentEven:    evenName,
-    rotationParentOdd:     oddName,
-    rotationScheme:        household?.rotationScheme,
-    householdMode:         household?.mode ?? 'custody',
+    absencePeriods:        allAbsences.where((a) => a.coversDate(date)).toList(),
+    holidayBlocks:         allHolidays.where((b) => b.coversDate(date)).toList(),
   ).resolveDay(date);
 });
 
@@ -114,6 +101,30 @@ final dashboardProvider = FutureProvider<List<ResolvedEvent>>((ref) async {
   return [...results[0], ...results[1]];
 });
 
+// ── Day owner (dashboard headers, etc.) ──────────────────────────────────────
+
+/// Who has the kids on a given day, or null while inputs are loading or in
+/// shared mode (where ownership is "Both" and not worth labelling).
+final dayOwnerProvider = Provider.family<String?, DateTime>((ref, rawDate) {
+  final household = ref.watch(householdProvider).valueOrNull;
+  if (household == null || household.mode == 'shared') return null;
+
+  final date         = DateTime(rawDate.year, rawDate.month, rawDate.day);
+  final weekdayRules = ref.watch(weekdayRulesProvider).valueOrNull;
+  if (weekdayRules == null) return null;
+  final recurring = ref.watch(recurringArrangementsProvider).valueOrNull ?? const [];
+  final absences  = ref.watch(absencePeriodsProvider).valueOrNull ?? const [];
+  final holidays  = ref.watch(holidayBlocksProvider).valueOrNull ?? const [];
+
+  return buildEngine(
+    household:             household,
+    weekdayRules:          weekdayRules,
+    recurringArrangements: recurring,
+    absencePeriods:        absences.where((a) => a.coversDate(date)).toList(),
+    holidayBlocks:         holidays.where((b) => b.coversDate(date)).toList(),
+  ).dayOwner(date);
+});
+
 // ── Full week of events (for calendar screen) ────────────────────────────────
 
 final weekEventsProvider =
@@ -128,60 +139,52 @@ final weekEventsProvider =
 
   final overrideRecords = await pb.collection('manual_overrides').getFullList(
       filter:
-          'target_date >= "${_fmt(monday)}" && target_date <= "${_fmt(weekEnd)}"');
+          'target_date >= "${isoDate(monday)}" && target_date <= "${isoDate(weekEnd)}"');
   final allOverrides =
       overrideRecords.map((r) => ManualOverride.fromRecord(r.toJson())).toList();
 
   final custodyRecords = await pb.collection('custody_requests').getFullList(
       filter:
-          'date >= "${_fmt(monday)}" && date <= "${_fmt(weekEnd)}" && status = "accepted"');
+          'date >= "${isoDate(monday)}" && date <= "${isoDate(weekEnd)}" && status = "accepted"');
   final allCustody =
       custodyRecords.map((r) => CustodyRequest.fromRecord(r.toJson())).toList();
 
   final allAbsences = await ref.watch(absencePeriodsProvider.future);
   final allHolidays = await ref.watch(holidayBlocksProvider.future);
 
+  // One engine for the whole week — the engine filters overrides/custody/
+  // absences by date internally, so per-day re-construction is wasted work.
+  final engine = buildEngine(
+    household:             ref.watch(householdProvider).valueOrNull,
+    baseRules:             rules,
+    overrides:             allOverrides,
+    custodyRequests:       allCustody,
+    weekdayRules:          weekdayRules,
+    recurringArrangements: recurring,
+    absencePeriods:        allAbsences,
+    holidayBlocks:         allHolidays,
+  );
+
   final result = <String, List<ResolvedEvent>>{};
   for (int i = 0; i < 7; i++) {
-    final date         = monday.add(Duration(days: i));
-    final dayOverrides = allOverrides
-        .where((o) =>
-            o.targetDate.year  == date.year &&
-            o.targetDate.month == date.month &&
-            o.targetDate.day   == date.day)
-        .toList();
-    final dayCustody = allCustody
-        .where((r) =>
-            r.date.year  == date.year &&
-            r.date.month == date.month &&
-            r.date.day   == date.day)
-        .toList();
-    final dayAbsences  = allAbsences.where((a) => a.coversDate(date)).toList();
-    final dayHolidays  = allHolidays.where((b) => b.coversDate(date)).toList();
-    final household = ref.watch(householdProvider).valueOrNull;
-    final anchor    = household?.rotationAnchorDate ?? DateTime(2025, 1, 6);
-    final evenName  = household?.rotationParentEvenName ?? 'Bennet';
-    final oddName   = household?.rotationParentOddName  ?? 'Jana';
-
-    result[_fmt(date)] = ResolutionEngine(
-      baseRules:             rules,
-      overrides:             dayOverrides,
-      custodyRequests:       dayCustody,
-      weekdayRules:          weekdayRules,
-      recurringArrangements: recurring,
-      absencePeriods:        dayAbsences,
-      holidayBlocks:         dayHolidays,
-      rotationAnchor:        anchor,
-      rotationParentEven:    evenName,
-      rotationParentOdd:     oddName,
-      rotationScheme:        household?.rotationScheme,
-      householdMode:         household?.mode ?? 'custody',
-    ).resolveDay(date);
+    final date = monday.add(Duration(days: i));
+    result[isoDate(date)] = engine.resolveDay(date);
   }
   return result;
 });
 
 // ── Base rules mutations ──────────────────────────────────────────────────────
+
+/// The active household id, or throws with a clear message. Every create MUST
+/// stamp `household` — the hardened access rules deny unstamped records with
+/// an opaque 400 otherwise.
+String _requireHouseholdId(Ref ref) {
+  final hid = ref.read(householdProvider).valueOrNull?.id;
+  if (hid == null) {
+    throw Exception('No active household yet — please try again in a moment.');
+  }
+  return hid;
+}
 
 class BaseRulesNotifier extends AsyncNotifier<void> {
   @override
@@ -196,7 +199,6 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
     required bool isShared,
     String? handoverFrom,
   }) async {
-    final hid = ref.read(householdProvider).valueOrNull?.id;
     await pb.collection('rules_base').create(body: {
       'child_name':    childName,
       'day_of_week':   dayOfWeek,
@@ -205,7 +207,7 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
       'location':      location,
       'is_shared':     isShared,
       'handover_from': handoverFrom ?? '',
-      if (hid != null) 'household': hid,
+      'household':     _requireHouseholdId(ref),
     });
     _invalidate();
   }
@@ -314,23 +316,22 @@ class WeekdayRulesNotifier extends AsyncNotifier<void> {
       }
     } catch (_) {}
 
-    final hid = ref.read(householdProvider).valueOrNull?.id;
     await pb.collection('custody_weekday_rules').create(body: {
       'day_of_week':     dayOfWeek,
       'assigned_parent': assignedParent,
       'reason':          reason,
       'active':          true,
-      if (hid != null) 'household': hid,
+      'household':       _requireHouseholdId(ref),
     });
-
-    ref.invalidate(weekdayRulesProvider);
-    ref.invalidate(dashboardProvider);
-    ref.invalidate(weekEventsProvider);
-    ref.invalidate(resolvedDayProvider);
+    _invalidate();
   }
 
   Future<void> delete(String id) async {
     await pb.collection('custody_weekday_rules').delete(id);
+    _invalidate();
+  }
+
+  void _invalidate() {
     ref.invalidate(weekdayRulesProvider);
     ref.invalidate(dashboardProvider);
     ref.invalidate(weekEventsProvider);
@@ -370,7 +371,6 @@ class RecurringArrangementsNotifier extends AsyncNotifier<void> {
       }
     } catch (_) {}
 
-    final hid = ref.read(householdProvider).valueOrNull?.id;
     await pb.collection('custody_recurring').create(body: {
       'day_of_week':        dayOfWeek,
       'to_parent':          toParent,
@@ -384,7 +384,7 @@ class RecurringArrangementsNotifier extends AsyncNotifier<void> {
       'note':               note ?? '',
       'active':             true,
       'created_by':         pb.authStore.record?.id ?? '',
-      if (hid != null) 'household': hid,
+      'household':          _requireHouseholdId(ref),
     });
     _invalidate();
   }
@@ -428,6 +428,3 @@ final recurringArrangementsNotifierProvider =
 DateTime weekMonday(DateTime date) =>
     DateTime(date.year, date.month, date.day)
         .subtract(Duration(days: date.weekday - 1));
-
-String _fmt(DateTime d) =>
-    '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';

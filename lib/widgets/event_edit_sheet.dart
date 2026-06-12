@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 
 import '../models/resolved_event.dart';
-import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
+import '../utils/dates.dart';
+import 'common.dart';
+import 'form_fields.dart';
 
 /// Bottom sheet for creating a new standing rule or editing an existing
 /// event (BaseRule or adhoc ManualOverride).
@@ -57,11 +58,6 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
     super.dispose();
   }
 
-  String _fmtTime(TimeOfDay t) =>
-      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-
-  String _fmtDate(DateTime d) => DateFormat('EEE, d MMM yyyy').format(d);
-
   Future<void> _pickTime() async {
     final picked = await showTimePicker(context: context, initialTime: _time);
     if (picked != null) setState(() => _time = picked);
@@ -93,12 +89,12 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
         await ref.read(manualOverridesNotifierProvider.notifier).updateOverride(
               widget.event!.overrideId!,
               childName:    _child,
-              targetDate:   DateFormat('yyyy-MM-dd').format(_date),
-              overrideTime: _fmtTime(_time),
+              targetDate:   isoDate(_date),
+              overrideTime: fmtTime(_time),
               activity:     _activityCtrl.text.trim(),
               location:     _locationCtrl.text.trim(),
               isShared:     _isShared,
-              endTime:      _endTime != null ? _fmtTime(_endTime!) : null,
+              endTime:      _endTime != null ? fmtTime(_endTime!) : null,
               note:         _noteCtrl.text.trim(),
             );
       } else if (_isEditRule) {
@@ -106,7 +102,7 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
               widget.event!.ruleId!,
               childName:   _child,
               dayOfWeek:   _dayOfWeek,
-              eventTime:   _fmtTime(_time),
+              eventTime:   fmtTime(_time),
               activity:    _activityCtrl.text.trim(),
               location:    _locationCtrl.text.trim(),
               isShared:    _isShared,
@@ -116,7 +112,7 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
         await ref.read(baseRulesNotifierProvider.notifier).create(
               childName:   _child,
               dayOfWeek:   _dayOfWeek,
-              eventTime:   _fmtTime(_time),
+              eventTime:   fmtTime(_time),
               activity:    _activityCtrl.text.trim(),
               location:    _locationCtrl.text.trim(),
               isShared:    _isShared,
@@ -124,11 +120,7 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
       }
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
+      if (mounted) showErrorSnack(context, e);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -137,15 +129,16 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
   @override
   Widget build(BuildContext context) {
     final String title;
-    if (_isCreateRule)   title = 'New standing event';
-    else if (_isEditRule) title = 'Edit standing event';
-    else                  title = 'Edit event';
+    if (_isCreateRule) {
+      title = 'New standing event';
+    } else if (_isEditRule) {
+      title = 'Edit standing event';
+    } else {
+      title = 'Edit event';
+    }
 
     return Padding(
-      padding: EdgeInsets.only(
-        left: 24, right: 24, top: 24,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-      ),
+      padding: sheetPadding(context),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -169,10 +162,10 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
 
             // Date or day-of-week picker
             if (_isEditOverride) ...[
-              _DateField(label: _fmtDate(_date), onTap: _pickDate),
+              PickerField.date(label: fmtDateLong(_date), onTap: _pickDate),
               const SizedBox(height: 12),
             ] else ...[
-              _DayOfWeekField(
+              DayOfWeekField(
                 value: _dayOfWeek,
                 onChanged: (v) => setState(() => _dayOfWeek = v),
               ),
@@ -180,16 +173,14 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
             ],
 
             // Time
-            _TimeField(
-              label: _fmtTime(_time),
-              onTap: _pickTime,
-            ),
+            PickerField(label: fmtTime(_time), onTap: _pickTime),
             const SizedBox(height: 12),
 
             // Activity
             TextField(
               controller: _activityCtrl,
               textCapitalization: TextCapitalization.sentences,
+              onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 labelText: 'Event name',
                 prefixIcon: Icon(Icons.event_outlined),
@@ -212,8 +203,10 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
 
             // End time — adhoc overrides only
             if (_isEditOverride) ...[
-              _TimeField(
-                label: _endTime != null ? 'Ends: ${_fmtTime(_endTime!)}' : 'End time (optional)',
+              PickerField(
+                label: _endTime != null
+                    ? 'Ends: ${fmtTime(_endTime!)}'
+                    : 'End time (optional)',
                 onTap: _pickEndTime,
                 icon: Icons.timer_off_outlined,
               ),
@@ -237,20 +230,9 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
             ],
 
             // Child
-            DropdownButtonFormField<String>(
+            ChildDropdown(
               value: _child,
-              decoration: const InputDecoration(
-                  labelText: 'Child', border: OutlineInputBorder()),
-              items: (ref.watch(householdChildNamesProvider)
-                  .map((c) => c.name)
-                  .toList()
-                ..insert(0, 'All'))
-                  .map((name) => DropdownMenuItem(
-                        value: name,
-                        child: Text(name == 'All' ? 'All children' : name),
-                      ))
-                  .toList(),
-              onChanged: (v) => setState(() => _child = v ?? 'All'),
+              onChanged: (v) => setState(() => _child = v),
             ),
             const SizedBox(height: 4),
 
@@ -264,94 +246,14 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
             ),
             const SizedBox(height: 16),
 
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _saving ? null : _save,
-                child: _saving
-                    ? const SizedBox(
-                        height: 18, width: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : Text(_isCreateRule ? 'Add Event' : 'Save'),
-              ),
+            BusyButton(
+              busy: _saving,
+              onPressed: _activityCtrl.text.trim().isEmpty ? null : _save,
+              child: Text(_isCreateRule ? 'Add Event' : 'Save'),
             ),
           ],
         ),
       ),
     );
   }
-}
-
-// ── Helper sub-widgets ────────────────────────────────────────────────────────
-
-class _DateField extends StatelessWidget {
-  final String label;
-  final VoidCallback onTap;
-  const _DateField({required this.label, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(4),
-        child: InputDecorator(
-          decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.calendar_today_outlined),
-            border: OutlineInputBorder(),
-            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-          ),
-          child: Text(label, style: Theme.of(context).textTheme.bodyLarge),
-        ),
-      );
-}
-
-class _TimeField extends StatelessWidget {
-  final String label;
-  final VoidCallback onTap;
-  final IconData icon;
-  const _TimeField({required this.label, required this.onTap, this.icon = Icons.schedule_outlined});
-
-  @override
-  Widget build(BuildContext context) => InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(4),
-        child: InputDecorator(
-          decoration: InputDecoration(
-            prefixIcon: Icon(icon),
-            border: const OutlineInputBorder(),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-          ),
-          child: Text(label, style: Theme.of(context).textTheme.bodyLarge),
-        ),
-      );
-}
-
-const _kDays = [
-  (1, 'Monday'),
-  (2, 'Tuesday'),
-  (3, 'Wednesday'),
-  (4, 'Thursday'),
-  (5, 'Friday'),
-  (6, 'Saturday'),
-  (7, 'Sunday'),
-];
-
-class _DayOfWeekField extends StatelessWidget {
-  final int value;
-  final ValueChanged<int> onChanged;
-  const _DayOfWeekField({required this.value, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) => DropdownButtonFormField<int>(
-        value: value,
-        decoration: const InputDecoration(
-          labelText: 'Day of week',
-          prefixIcon: Icon(Icons.repeat_outlined),
-          border: OutlineInputBorder(),
-        ),
-        items: _kDays
-            .map((d) => DropdownMenuItem(value: d.$1, child: Text(d.$2)))
-            .toList(),
-        onChanged: (v) => onChanged(v ?? DateTime.monday),
-      );
 }

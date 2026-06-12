@@ -5,11 +5,20 @@ import '../providers/auth_provider.dart';
 import '../providers/custody_provider.dart';
 import '../widgets/custody_request_tile.dart';
 
-class RequestsScreen extends ConsumerWidget {
+enum _RequestsView { upcoming, past }
+
+class RequestsScreen extends ConsumerStatefulWidget {
   const RequestsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<RequestsScreen> createState() => _RequestsScreenState();
+}
+
+class _RequestsScreenState extends ConsumerState<RequestsScreen> {
+  _RequestsView _view = _RequestsView.upcoming;
+
+  @override
+  Widget build(BuildContext context) {
     final requestsAsync = ref.watch(custodyRequestsProvider);
     final myId = ref.watch(authProvider).valueOrNull?.userId ?? '';
 
@@ -21,40 +30,75 @@ class RequestsScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => const Center(child: Text('Error loading requests')),
         data: (allRequests) {
-          // This is a forward-looking action list: hide past-dated requests
-          // (history lives on the calendar) and surface upcoming ones soonest
-          // first. Standing recurring arrangements never appear here — future
-          // occurrences are expanded virtually and past ones are frozen with
-          // a past date, both of which this filter excludes.
+          // Upcoming is the action list (soonest first); Past is the history
+          // of what was agreed (most recent first). Standing recurring
+          // arrangements never appear here — future occurrences are expanded
+          // virtually and past ones are frozen with a past date.
           final now   = DateTime.now();
           final today = DateTime(now.year, now.month, now.day);
+          final upcoming = _view == _RequestsView.upcoming;
           final requests = allRequests
-              .where((r) => !r.date.isBefore(today))
+              .where((r) => upcoming
+                  ? !r.date.isBefore(today)
+                  : r.date.isBefore(today))
               .toList()
-            ..sort((a, b) => a.date.compareTo(b.date));
+            ..sort((a, b) => upcoming
+                ? a.date.compareTo(b.date)
+                : b.date.compareTo(a.date));
 
-          if (requests.isEmpty) {
-            return RefreshIndicator(
-              onRefresh: refresh,
-              child: ListView(
-                children: const [
-                  SizedBox(height: 120),
-                  Center(
-                      child: Text('No upcoming requests.',
-                          style: TextStyle(color: Colors.grey))),
-                ],
+          return Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: SegmentedButton<_RequestsView>(
+                  segments: const [
+                    ButtonSegment(
+                      value: _RequestsView.upcoming,
+                      icon: Icon(Icons.upcoming_outlined, size: 16),
+                      label: Text('Upcoming'),
+                    ),
+                    ButtonSegment(
+                      value: _RequestsView.past,
+                      icon: Icon(Icons.history, size: 16),
+                      label: Text('Past'),
+                    ),
+                  ],
+                  selected: {_view},
+                  onSelectionChanged: (s) => setState(() => _view = s.first),
+                  style: SegmentedButton.styleFrom(
+                      visualDensity: VisualDensity.compact),
+                ),
               ),
-            );
-          }
-          return RefreshIndicator(
-            onRefresh: refresh,
-            child: ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: requests.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (_, i) =>
-                  CustodyRequestTile(request: requests[i], myId: myId),
-            ),
+              Expanded(
+                child: requests.isEmpty
+                    ? RefreshIndicator(
+                        onRefresh: refresh,
+                        child: ListView(
+                          children: [
+                            const SizedBox(height: 120),
+                            Center(
+                                child: Text(
+                                    upcoming
+                                        ? 'No upcoming requests.'
+                                        : 'No past requests.',
+                                    style:
+                                        const TextStyle(color: Colors.grey))),
+                          ],
+                        ),
+                      )
+                    : RefreshIndicator(
+                        onRefresh: refresh,
+                        child: ListView.separated(
+                          padding: const EdgeInsets.all(16),
+                          itemCount: requests.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 8),
+                          itemBuilder: (_, i) => CustodyRequestTile(
+                              request: requests[i], myId: myId),
+                        ),
+                      ),
+              ),
+            ],
           );
         },
       ),

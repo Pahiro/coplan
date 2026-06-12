@@ -5,9 +5,15 @@ import 'package:intl/intl.dart';
 import '../providers/auth_provider.dart';
 import '../providers/custody_provider.dart';
 import '../providers/household_provider.dart';
+import '../utils/dates.dart';
+import 'common.dart';
+import 'form_fields.dart';
 
 class NewRequestSheet extends ConsumerStatefulWidget {
-  const NewRequestSheet({super.key});
+  /// Pre-selects the date (e.g. the day selected on the calendar).
+  final DateTime? initialDate;
+
+  const NewRequestSheet({super.key, this.initialDate});
 
   @override
   ConsumerState<NewRequestSheet> createState() => _NewRequestSheetState();
@@ -15,7 +21,7 @@ class NewRequestSheet extends ConsumerStatefulWidget {
 
 class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
   // ── State ───────────────────────────────────────────────────────────────────
-  DateTime _date    = DateTime.now();
+  late DateTime _date;
   Set<String> _selectedChildren = {}; // empty = All
   bool     _sending = false;
 
@@ -33,6 +39,7 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
   @override
   void initState() {
     super.initState();
+    _date = widget.initialDate ?? DateTime.now();
     _pickupTime = _defaultPickupTime(_date);
   }
 
@@ -46,12 +53,6 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
       d.weekday <= DateTime.friday
           ? const TimeOfDay(hour: 16, minute: 0)
           : const TimeOfDay(hour: 9, minute: 0);
-
-  String _fmtDate(DateTime d) => DateFormat('EEE, d MMM yyyy').format(d);
-  String _fmtTime(TimeOfDay? t) => t != null
-      ? '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}'
-      : '—';
-  String _isoDate(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
@@ -94,11 +95,11 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
 
       await ref.read(custodyRequestsProvider.notifier).createRequest(
             iAmTaking:        _iAmTaking,
-            date:             _isoDate(_date),
-            childName:        _encodeChildName(_selectedChildren),
-            pickupTime:       _fmtTime(_pickupTime),
+            date:             isoDate(_date),
+            childName:        encodeChildSelection(_selectedChildren),
+            pickupTime:       fmtTimeOr(_pickupTime),
             returnTime:       (_hasReturnTime && !_returnTimeTbd)
-                                  ? _fmtTime(_returnTime) : null,
+                                  ? fmtTimeOr(_returnTime) : null,
             returnTimeTbd:    _hasReturnTime && _returnTimeTbd,
             note:             _noteCtrl.text.isEmpty ? null : _noteCtrl.text,
             repeatWeekly:     !isHelper && _repeatWeekly && !_hasReturnTime,
@@ -115,7 +116,7 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
           context: context,
           builder: (_) => AlertDialog(
             title: const Text('Something went wrong'),
-            content: Text('$e'),
+            content: Text(friendlyError(e)),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(context),
@@ -152,10 +153,7 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
     final fromName = isHelper ? myName     : (_iAmTaking ? otherName : myName);
 
     return Padding(
-      padding: EdgeInsets.only(
-        left: 24, right: 24, top: 24,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-      ),
+      padding: sheetPadding(context),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -175,7 +173,7 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
             // Recipient
             if (helpers.isNotEmpty) ...[
               DropdownButtonFormField<String>(
-                value: _recipientKey,
+                initialValue: _recipientKey,
                 decoration: const InputDecoration(
                   labelText: 'Who has the kids?',
                   border: OutlineInputBorder(),
@@ -222,25 +220,25 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
             ],
 
             // Date
-            _DatePickerField(label: _fmtDate(_date), onTap: _pickDate),
+            PickerField.date(label: fmtDateLong(_date), onTap: _pickDate),
             const SizedBox(height: 12),
 
             // Child
-            _ChildChips(
+            ChildChips(
                 selected: _selectedChildren,
                 onChanged: (s) => setState(() => _selectedChildren = s)),
             const SizedBox(height: 12),
 
             // Pickup time
-            _TimePickerField(
+            PickerField(
               label:
-                  '${_toParentCollects ? "Pickup" : "Drop off"}: ${_fmtTime(_pickupTime)}',
+                  '${_toParentCollects ? "Pickup" : "Drop off"}: ${fmtTimeOr(_pickupTime)}',
               onTap: () => _pickTime(_pickupTime, (t) => _pickupTime = t),
             ),
             const SizedBox(height: 6),
 
             // Transport at pickup
-            _transportLabel('Who brings the kids?'),
+            _transportLabel(context, 'Who brings the kids?'),
             const SizedBox(height: 6),
             SegmentedButton<bool>(
               segments: [
@@ -281,8 +279,8 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
 
             if (_hasReturnTime) ...[
               if (!_returnTimeTbd) ...[
-                _TimePickerField(
-                  label: 'Return: ${_fmtTime(_returnTime)}',
+                PickerField(
+                  label: 'Return: ${fmtTimeOr(_returnTime)}',
                   onTap: () => _pickTime(_returnTime, (t) => _returnTime = t),
                 ),
                 const SizedBox(height: 4),
@@ -314,7 +312,7 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
 
             if (_hasReturnTime) ...[
               const SizedBox(height: 8),
-              _transportLabel('Who handles the return?'),
+              _transportLabel(context, 'Who handles the return?'),
               const SizedBox(height: 6),
               SegmentedButton<bool>(
                 segments: [
@@ -348,20 +346,12 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
             const SizedBox(height: 20),
 
             // Submit
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _sending ? null : _send,
-                child: _sending
-                    ? const SizedBox(
-                        height: 18,
-                        width: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : Text(_hasReturnTime
-                        ? 'Send Handover Request'
-                        : 'Send Custody Request'),
-              ),
+            BusyButton(
+              busy: _sending,
+              onPressed: _send,
+              child: Text(_hasReturnTime
+                  ? 'Send Handover Request'
+                  : 'Send Custody Request'),
             ),
           ],
         ),
@@ -370,99 +360,10 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
   }
 }
 
-// ── Shared sub-widgets ────────────────────────────────────────────────────────
-
-Widget _transportLabel(String text) => Padding(
+Widget _transportLabel(BuildContext context, String text) => Padding(
       padding: const EdgeInsets.only(left: 2),
       child: Text(text,
-          style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          style: TextStyle(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurfaceVariant)),
     );
-
-class _DatePickerField extends StatelessWidget {
-  final String label;
-  final VoidCallback onTap;
-  const _DatePickerField({required this.label, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(4),
-        child: InputDecorator(
-          decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.calendar_today_outlined),
-            border: OutlineInputBorder(),
-            contentPadding:
-                EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-          ),
-          child: Text(label, style: Theme.of(context).textTheme.bodyLarge),
-        ),
-      );
-}
-
-class _TimePickerField extends StatelessWidget {
-  final String label;
-  final VoidCallback onTap;
-  const _TimePickerField({required this.label, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(4),
-        child: InputDecorator(
-          decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.schedule_outlined),
-            border: OutlineInputBorder(),
-            contentPadding:
-                EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-          ),
-          child: Text(label, style: Theme.of(context).textTheme.bodyLarge),
-        ),
-      );
-}
-
-String _encodeChildName(Set<String> s) =>
-    s.isEmpty ? 'All' : s.toList().join(',');
-
-class _ChildChips extends ConsumerWidget {
-  final Set<String> selected;
-  final ValueChanged<Set<String>> onChanged;
-  const _ChildChips({required this.selected, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final children = ref.watch(householdChildNamesProvider);
-    if (children.isEmpty) return const SizedBox.shrink();
-
-    final allSelected = selected.isEmpty || selected.length == children.length;
-    return InputDecorator(
-      decoration: const InputDecoration(
-        labelText: 'Children',
-        border: OutlineInputBorder(),
-        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      ),
-      child: Wrap(
-        spacing: 8,
-        children: [
-          FilterChip(
-            label: const Text('All'),
-            selected: allSelected,
-            onSelected: (_) => onChanged({}),
-          ),
-          ...children.map((c) => FilterChip(
-                label: Text(c.name),
-                selected: !allSelected && selected.contains(c.name),
-                onSelected: (on) {
-                  final next = Set<String>.from(selected);
-                  if (on) {
-                    next.add(c.name);
-                  } else {
-                    next.remove(c.name);
-                  }
-                  onChanged(next.length == children.length ? {} : next);
-                },
-              )),
-        ],
-      ),
-    );
-  }
-}

@@ -167,19 +167,19 @@ void main() {
         'rotation_scheme_type': '2-2-5-5',
       },
       members: [
-        HouseholdMember(
+        const HouseholdMember(
             id: 'm1',
             householdId: 'h1',
             userId: 'uBennet',
             role: 'parent',
             displayName: 'Bennet'),
-        HouseholdMember(
+        const HouseholdMember(
             id: 'm2',
             householdId: 'h1',
             userId: 'uJana',
             role: 'parent',
             displayName: 'Jana'),
-        HouseholdMember(
+        const HouseholdMember(
             id: 'm3',
             householdId: 'h1',
             userId: 'uGran',
@@ -187,8 +187,8 @@ void main() {
             displayName: 'Gran'),
       ],
       children: [
-        HouseholdChild(id: 'k1', householdId: 'h1', name: 'Henri'),
-        HouseholdChild(id: 'k2', householdId: 'h1', name: 'Chris'),
+        const HouseholdChild(id: 'k1', householdId: 'h1', name: 'Henri'),
+        const HouseholdChild(id: 'k2', householdId: 'h1', name: 'Chris'),
       ],
     );
 

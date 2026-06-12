@@ -4,11 +4,12 @@ import '../core/pb_client.dart';
 import '../services/notification_service.dart';
 import 'auth_provider.dart';
 import 'custody_provider.dart';
+import 'expense_provider.dart';
 import 'schedule_provider.dart';
 
-/// Watching this provider opens a PocketBase SSE subscription for
-/// [custody_requests]. Fires in-app notifications and invalidates caches
-/// when events arrive.
+/// Watching this provider opens PocketBase SSE subscriptions for
+/// [custody_requests] and [expense_splits]. Fires in-app notifications and
+/// invalidates caches when events arrive.
 final realtimeNotificationsProvider = Provider<void>((ref) {
   final auth = ref.watch(authProvider).valueOrNull;
   if (auth == null || !auth.isLoggedIn || auth.userId == null) return;
@@ -79,7 +80,54 @@ final realtimeNotificationsProvider = Provider<void>((ref) {
       })
       .catchError((_) => () async {});
 
+  // ── Expense activity ────────────────────────────────────────────────────────
+  // Created split directed at me → "you owe"; my split marked paid → receipt.
+  pb
+      .collection('expense_splits')
+      .subscribe('*', (e) async {
+        final record = e.record;
+        if (record == null) return;
+
+        // Any expense change is worth refreshing the lists for.
+        ref.invalidate(expensesProvider);
+        ref.invalidate(expenseSummaryProvider);
+
+        final splitUser = record.data['user'] as String?;
+        if (splitUser != myId) return;
+
+        final amountDue = (record.data['amount_due'] as num?)?.toInt() ?? 0;
+        final amountStr = 'R ${(amountDue / 100).toStringAsFixed(2)}';
+        final notifId = record.id.hashCode.abs() % 10000 + 10000;
+
+        String title = 'a shared expense';
+        try {
+          final expenseId = record.data['expense'] as String? ?? '';
+          if (expenseId.isNotEmpty) {
+            final expense =
+                await pb.collection('shared_expenses').getOne(expenseId);
+            title = expense.data['title'] as String? ?? title;
+          }
+        } catch (_) {}
+
+        if (e.action == 'create') {
+          NotificationService.show(
+            title: 'New shared expense',
+            body:  '$title — your share is $amountStr',
+            id:    notifId,
+          );
+        } else if (e.action == 'update' &&
+            record.data['status'] == 'paid') {
+          NotificationService.show(
+            title: 'Payment recorded',
+            body:  'Your $amountStr share of $title was marked paid',
+            id:    notifId,
+          );
+        }
+      })
+      .catchError((_) => () async {});
+
   ref.onDispose(() {
     pb.collection('custody_requests').unsubscribe('*').catchError((_) => () async {});
+    pb.collection('expense_splits').unsubscribe('*').catchError((_) => () async {});
   });
 });

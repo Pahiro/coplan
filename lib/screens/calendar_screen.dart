@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../providers/absence_provider.dart';
 import '../providers/schedule_provider.dart';
+import '../utils/dates.dart';
 import '../widgets/absence_banner.dart';
 import '../widgets/month_grid.dart';
 import '../widgets/new_action_sheet.dart';
@@ -65,15 +66,22 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
 
   // ── Build ─────────────────────────────────────────────────────────────────
 
+  /// Swipe left/right anywhere on the strip/grid to change week or month.
+  void _onSwipe(DragEndDetails details) {
+    final vx = details.primaryVelocity ?? 0;
+    if (vx.abs() < 200) return;
+    if (vx < 0) {
+      _next();
+    } else {
+      _prev();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final monday     = weekMonday(_selectedDay);
     final weekEvents = ref.watch(weekEventsProvider(monday));
-    final selectedKey =
-        '${_selectedDay.year}-'
-        '${_selectedDay.month.toString().padLeft(2, '0')}-'
-        '${_selectedDay.day.toString().padLeft(2, '0')}';
-    final selectedEvents = weekEvents.valueOrNull?[selectedKey] ?? [];
+    final selectedEvents = weekEvents.valueOrNull?[isoDate(_selectedDay)] ?? [];
 
     return Scaffold(
       floatingActionButton: FloatingActionButton(
@@ -136,22 +144,24 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
             ],
           ),
         ),
-        // ── Strip / grid ───────────────────────────────────────────────────
-        if (_viewMode == _ViewMode.week)
-          WeekStrip(
-            weekStart: monday,
-            selectedDay: _selectedDay,
-            onDaySelected: (d) => setState(() => _selectedDay = d),
-          )
-        else
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: MonthGrid(
-              month: DateTime(_selectedDay.year, _selectedDay.month),
-              selectedDay: _selectedDay,
-              onDaySelected: (d) => setState(() => _selectedDay = d),
-            ),
-          ),
+        // ── Strip / grid (horizontal swipe changes week/month) ─────────────
+        GestureDetector(
+          onHorizontalDragEnd: _onSwipe,
+          child: _viewMode == _ViewMode.week
+              ? WeekStrip(
+                  weekStart: monday,
+                  selectedDay: _selectedDay,
+                  onDaySelected: (d) => setState(() => _selectedDay = d),
+                )
+              : Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: MonthGrid(
+                    month: DateTime(_selectedDay.year, _selectedDay.month),
+                    selectedDay: _selectedDay,
+                    onDaySelected: (d) => setState(() => _selectedDay = d),
+                  ),
+                ),
+        ),
         const Divider(height: 1),
         // ── Selected day label ─────────────────────────────────────────────
         Padding(

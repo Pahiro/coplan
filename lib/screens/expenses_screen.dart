@@ -1,13 +1,93 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/expense_categories.dart';
 import '../models/shared_expense.dart';
-import '../providers/auth_provider.dart';
 import '../providers/expense_provider.dart';
 import '../providers/household_provider.dart';
 import 'expense_detail_screen.dart';
-import 'expense_export_screen.dart';
 import 'expense_form_screen.dart';
+
+/// Settle-up dialog: clears every unpaid split in both directions so one net
+/// payment settles the slate. Exposed so the app bar (shell) can offer it.
+void showSettleUpDialog(BuildContext context, WidgetRef ref) {
+  final summary =
+      ref.read(expenseSummaryProvider).valueOrNull ?? const ExpenseSummary();
+
+  if (summary.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Nothing outstanding to settle.')),
+    );
+    return;
+  }
+
+  final net = summary.netCents;
+  final netLine = net == 0
+      ? 'Both sides owe the same — settling clears everything.'
+      : net > 0
+          ? 'Net: you are owed ${summary.netFormatted}.'
+          : 'Net: you owe ${summary.netFormatted}.';
+
+  final refCtrl = TextEditingController();
+  final noteCtrl = TextEditingController();
+
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Settle Up'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Marks every outstanding split — in both directions — as paid. '
+            '$netLine',
+            style: const TextStyle(fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: refCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Payment reference',
+              hintText: 'e.g. EFT ref',
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: noteCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Note (optional)',
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () async {
+            Navigator.pop(ctx);
+            final result = await ref.read(expensesProvider.notifier).settleUpAll(
+                  reference: refCtrl.text.trim(),
+                  note: noteCtrl.text.trim(),
+                );
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                      'Settled ${result.count} split${result.count == 1 ? '' : 's'}'),
+                ),
+              );
+            }
+          },
+          child: const Text('Settle All'),
+        ),
+      ],
+    ),
+  );
+}
 
 class ExpensesScreen extends ConsumerStatefulWidget {
   const ExpensesScreen({super.key});
@@ -100,119 +180,16 @@ class _ExpensesScreenState extends ConsumerState<ExpensesScreen> {
           ),
         ],
       ),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton.small(
-            heroTag: 'export_fab',
-            tooltip: 'Export CSV',
-            backgroundColor: Theme.of(context).colorScheme.tertiaryContainer,
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                  builder: (_) => const ExpenseExportScreen()),
-            ),
-            child: Icon(Icons.download,
-                color: Theme.of(context).colorScheme.onTertiaryContainer),
-          ),
-          const SizedBox(height: 8),
-          FloatingActionButton.small(
-            heroTag: 'settle_fab',
-            tooltip: 'Settle up',
-            backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
-            onPressed: () => _showSettleUp(context, ref),
-            child: Icon(Icons.handshake,
-                color: Theme.of(context).colorScheme.onSecondaryContainer),
-          ),
-          const SizedBox(height: 8),
-          FloatingActionButton(
-            heroTag: 'expense_fab',
-            tooltip: 'Add expense',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const ExpenseFormScreen()),
-            ),
-            child: const Icon(Icons.add),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showSettleUp(BuildContext context, WidgetRef ref) {
-    final household = ref.read(householdProvider).valueOrNull;
-    final myId = ref.read(authProvider).valueOrNull?.userId ?? '';
-    final otherParent = household?.members
-        .where((m) => m.isParent && m.userId != myId)
-        .firstOrNull;
-
-    if (otherParent == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No other parent found')),
-      );
-      return;
-    }
-
-    final refCtrl = TextEditingController();
-    final noteCtrl = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Settle Up'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Mark all pending splits for ${otherParent.displayName} as paid?',
-              style: const TextStyle(fontSize: 14),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: refCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Payment reference',
-                hintText: 'e.g. EFT ref',
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: noteCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Note (optional)',
-              ),
-            ),
-          ],
+      // Export and settle-up live in the app bar (see _MainShell) — a single
+      // FAB keeps the primary action obvious.
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'expense_fab',
+        tooltip: 'Add expense',
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const ExpenseFormScreen()),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              final result = await ref
-                  .read(expensesProvider.notifier)
-                  .settleUp(
-                    userId: otherParent.userId,
-                    reference: refCtrl.text.trim(),
-                    note: noteCtrl.text.trim(),
-                  );
-              if (context.mounted) {
-                final amt = (result.totalCents / 100).toStringAsFixed(2);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                        'Settled ${result.count} split${result.count == 1 ? '' : 's'} · R $amt'),
-                  ),
-                );
-              }
-            },
-            child: const Text('Settle All'),
-          ),
-        ],
+        child: const Icon(Icons.add),
       ),
     );
   }
@@ -241,17 +218,8 @@ class _ExpenseTile extends StatelessWidget {
   final SharedExpense expense;
   const _ExpenseTile({required this.expense});
 
-  static const _categoryIcons = {
-    'education': Icons.school,
-    'sport':     Icons.sports_soccer,
-    'medical':   Icons.local_hospital,
-    'clothing':  Icons.checkroom,
-    'other':     Icons.receipt_long,
-  };
-
   @override
   Widget build(BuildContext context) {
-    final icon = _categoryIcons[expense.category] ?? Icons.receipt_long;
     final cs = Theme.of(context).colorScheme;
 
     return Card(
@@ -259,7 +227,8 @@ class _ExpenseTile extends StatelessWidget {
       child: ListTile(
         leading: CircleAvatar(
           backgroundColor: cs.primaryContainer,
-          child: Icon(icon, color: cs.onPrimaryContainer, size: 20),
+          child: Icon(ExpenseCategory.iconFor(expense.category),
+              color: cs.onPrimaryContainer, size: 20),
         ),
         title: Text(expense.title),
         subtitle: Text(
@@ -276,7 +245,7 @@ class _ExpenseTile extends StatelessWidget {
         onTap: () => Navigator.push(
           context,
           MaterialPageRoute(
-              builder: (_) => ExpenseDetailScreen(expense: expense)),
+              builder: (_) => ExpenseDetailScreen(expenseId: expense.id)),
         ),
       ),
     );
@@ -300,14 +269,6 @@ class _FilterBar extends StatelessWidget {
     required this.onChildChanged,
   });
 
-  static const _categories = [
-    ('education', 'Education'),
-    ('sport',     'Sport'),
-    ('medical',   'Medical'),
-    ('clothing',  'Clothing'),
-    ('other',     'Other'),
-  ];
-
   @override
   Widget build(BuildContext context) {
     final hasFilters = category != null || child != null;
@@ -329,12 +290,12 @@ class _FilterBar extends StatelessWidget {
                 },
               ),
             ),
-          ..._categories.map((c) => Padding(
+          ...ExpenseCategory.all.map((c) => Padding(
                 padding: const EdgeInsets.only(right: 6),
                 child: FilterChip(
-                  label: Text(c.$2),
-                  selected: category == c.$1,
-                  onSelected: (sel) => onCategoryChanged(sel ? c.$1 : null),
+                  label: Text(c.label),
+                  selected: category == c.id,
+                  onSelected: (sel) => onCategoryChanged(sel ? c.id : null),
                 ),
               )),
           ...childNames.map((name) => Padding(

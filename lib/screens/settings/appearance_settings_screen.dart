@@ -78,7 +78,7 @@ class AppearanceSettingsScreen extends ConsumerWidget {
           if ((household?.helpers ?? const []).isNotEmpty)
             ...household!.helpers.map((m) => ColorSettingRow(
               label: m.displayName,
-              description: "Shown when ${m.displayName} is covering a pickup",
+              description: 'Shown when ${m.displayName} is covering a pickup',
               current: colors.parentColor(m.displayName),
               isEditable: myUserId == m.userId,
               onChanged: (c) =>
@@ -99,7 +99,7 @@ class AppearanceSettingsScreen extends ConsumerWidget {
             ),
             ...children.map((child) => ColorSettingRow(
               label: child.name,
-              description: "Shown on ${child.name}-specific events",
+              description: 'Shown on ${child.name}-specific events',
               current: colors.childColor(child.name),
               isEditable: true,
               onChanged: (c) => ref

@@ -286,7 +286,9 @@ class ResolutionEngine {
       // outgoing custody holder. Use holiday owner if one covers this date,
       // otherwise fall back to the rotation week owner.
       if (r.handoverFrom != null &&
-          r.handoverFrom != (holidayOwner(date) ?? weekOwner(date))) return false;
+          r.handoverFrom != (holidayOwner(date) ?? weekOwner(date))) {
+        return false;
+      }
       return true;
     }).toList();
     final events = rules.map((r) => _resolveRule(r, date)).toList();

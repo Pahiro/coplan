@@ -14,7 +14,7 @@ class CustodySettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Custody')),
+      appBar: AppBar(title: const Text('Time away')),
       body: ListView(
         padding: EdgeInsets.fromLTRB(
           16, 16, 16,
@@ -64,9 +64,9 @@ class _HolidayPeriodsSectionState
       data: (blocks) => Column(
         children: [
           if (blocks.isEmpty)
-            Card(
+            const Card(
               margin: EdgeInsets.zero,
-              child: const ListTile(
+              child: ListTile(
                 leading: Icon(Icons.beach_access_outlined),
                 title: Text('No holiday periods yet'),
                 subtitle: Text('Add one to override the rotation for school holidays or trips'),
@@ -127,13 +127,7 @@ class _HolidayPeriodsSectionState
     );
   }
 
-  String _fmtDisplay(DateTime d) =>
-      '${d.day} ${_monthAbbr(d.month)} ${d.year}';
-
-  String _monthAbbr(int m) => const [
-    '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-  ][m];
+  String _fmtDisplay(DateTime d) => DateFormat('d MMM yyyy').format(d);
 
   Future<void> _showAddSheet(
       BuildContext context, String parentA, String parentB) async {
@@ -177,8 +171,7 @@ class _AddHolidayBlockSheetState
     super.dispose();
   }
 
-  String _fmtDisplay(DateTime d) =>
-      '${d.day} ${const ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.month]} ${d.year}';
+  String _fmtDisplay(DateTime d) => DateFormat('d MMM yyyy').format(d);
 
   Future<void> _pickStart() async {
     final picked = await showDatePicker(
@@ -251,7 +244,7 @@ class _AddHolidayBlockSheetState
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
-            value: _parent,
+            initialValue: _parent,
             decoration: const InputDecoration(
               labelText: 'Who has the kids',
               border: OutlineInputBorder(),

@@ -23,14 +23,14 @@ class AppColors {
 
   /// Soft background tint for a parent.
   Color parentLightColor(String parentName) =>
-      parentColor(parentName).withOpacity(0.15);
+      parentColor(parentName).withValues(alpha: 0.15);
 
   /// Colour for a named child. Returns grey for 'All' / unknown.
   Color childColor(String childName) =>
       _childColors[childName] ?? Colors.grey;
 
   Color childLightColor(String childName) =>
-      childColor(childName).withOpacity(0.18);
+      childColor(childName).withValues(alpha: 0.18);
 
   /// True when the child name is a known specific child (not 'All').
   bool isChildSpecific(String childName) =>

@@ -1,8 +1,7 @@
-import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../engine/resolution_engine.dart';
+import '../engine/engine_factory.dart';
 import '../models/app_colors.dart';
 import '../models/base_rule.dart';
 import '../models/custody_request.dart';
@@ -14,6 +13,8 @@ import '../providers/colors_provider.dart';
 import '../providers/custody_provider.dart';
 import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
+import '../utils/dates.dart';
+import 'day_split.dart';
 
 /// Full-month colour-coded grid.
 /// Each cell background reflects [ResolutionEngine.dayOwner] for that date.
@@ -49,20 +50,15 @@ class MonthGrid extends ConsumerWidget {
     final absences  = ref.watch(absencePeriodsProvider).valueOrNull ?? const [];
     final holidays  = ref.watch(holidayBlocksProvider).valueOrNull ?? const [];
 
-    final household = ref.watch(householdProvider).valueOrNull;
-    final engine = ResolutionEngine(
-        baseRules:             rules,
-        overrides:             const [],
-        custodyRequests:       custodyRequests,
-        weekdayRules:          weekdayRules,
-        recurringArrangements: recurring,
-        absencePeriods:        absences,
-        holidayBlocks:         holidays,
-        rotationAnchor:        household?.rotationAnchorDate ?? DateTime(2025, 1, 6),
-        rotationParentEven:    household?.rotationParentEvenName ?? 'Bennet',
-        rotationParentOdd:     household?.rotationParentOddName ?? 'Jana',
-        rotationScheme:        household?.rotationScheme,
-        householdMode:         household?.mode ?? 'custody');
+    final engine = buildEngine(
+      household:             ref.watch(householdProvider).valueOrNull,
+      baseRules:             rules,
+      custodyRequests:       custodyRequests,
+      weekdayRules:          weekdayRules,
+      recurringArrangements: recurring,
+      absencePeriods:        absences,
+      holidayBlocks:         holidays,
+    );
 
     final firstOfMonth = DateTime(month.year, month.month, 1);
     final gridStart =
@@ -109,53 +105,18 @@ class MonthGrid extends ConsumerWidget {
               children: List.generate(7, (d) {
                 final date    = gridStart.add(Duration(days: week * 7 + d));
                 final inMonth = date.month == month.month;
-                final window  = engine.custodyWindows(date).firstOrNull;
-
-                // Default: schedule owner with no split.
-                String effectiveOwner = engine.dayOwner(date);
-                Color? windowToColor;
-
-                if (window != null) {
-                  final windowParent = window.toParent;
-                  // Use solid window-recipient colour only when all events are
-                  // covered AND the window has no definite return time.  If a
-                  // return time is set the base owner gets the kids back, so
-                  // show a split even when all scheduled events fall inside the
-                  // window.
-                  final windowHasDefiniteReturn =
-                      !window.returnTimeTbd && window.returnTime != null;
-                  if (engine.windowCoversAllEvents(date) && !windowHasDefiniteReturn) {
-                    effectiveOwner = windowParent;
-                  } else {
-                    // Partial overlap OR window ends at a known time → split.
-                    windowToColor = colors.parentColor(windowParent);
-                  }
-                }
-
-                // Also check for a partial-day transfer — handles both the
-                // window-only and window+transfer cases (ISSUES #6.1).
-                if (windowToColor == null) {
-                  final transfer = engine.dayTransferFor(date);
-                  if (transfer != null) {
-                    final p = transfer.pickupTime.split(':');
-                    final pickupMin = int.parse(p[0]) * 60 + int.parse(p[1]);
-                    if (pickupMin > 0) {
-                      effectiveOwner = transfer.fromParent;
-                      windowToColor  = colors.parentColor(transfer.toParent);
-                    }
-                  }
-                }
+                final split   = computeDaySplit(engine, colors, date);
 
                 return Expanded(
                   child: _MonthCell(
                     date:          date,
-                    owner:         effectiveOwner,
+                    owner:         split.owner,
                     inMonth:       inMonth,
-                    isSelected:    _same(date, selectedDay),
-                    isToday:       _same(date, today),
+                    isSelected:    sameDay(date, selectedDay),
+                    isToday:       sameDay(date, today),
                     colors:        colors,
                     onTap:         () => onDaySelected(date),
-                    windowToColor: windowToColor,
+                    windowToColor: split.splitColor,
                   ),
                 );
               }),
@@ -165,9 +126,6 @@ class MonthGrid extends ConsumerWidget {
       ],
     );
   }
-
-  static bool _same(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
 }
 
 class _MonthCell extends StatelessWidget {
@@ -197,22 +155,18 @@ class _MonthCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final parentColor = colors.parentColor(owner);
 
-    Color bg;
-    Color fg;
-
+    final Color fg;
     if (isSelected) {
-      bg = parentColor;
       fg = Colors.white;
     } else if (inMonth) {
-      bg = Colors.transparent;
       fg = Theme.of(context).colorScheme.onSurface;
     } else {
-      bg = Colors.transparent;
-      fg = Theme.of(context).colorScheme.onSurface.withOpacity(0.28);
+      fg = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.28);
     }
 
-    return GestureDetector(
+    return InkWell(
       onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         height: 40,
@@ -221,9 +175,9 @@ class _MonthCell extends StatelessWidget {
           color: windowToColor != null
               ? Colors.transparent
               : isSelected
-                  ? bg
+                  ? parentColor
                   : inMonth
-                      ? parentColor.withOpacity(0.14)
+                      ? parentColor.withValues(alpha: 0.14)
                       : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
           border: isToday && !isSelected
@@ -238,7 +192,7 @@ class _MonthCell extends StatelessWidget {
               if (inMonth && windowToColor != null)
                 SizedBox.expand(
                   child: CustomPaint(
-                    painter: _SplitPainter(
+                    painter: SplitPainter(
                       primaryColor:   parentColor,
                       secondaryColor: windowToColor!,
                       opacity: isSelected ? 0.8 : 0.14,
@@ -263,41 +217,4 @@ class _MonthCell extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Paints a diagonal split: [primaryColor] top-left, [secondaryColor] bottom-right.
-class _SplitPainter extends CustomPainter {
-  final Color  primaryColor;
-  final Color  secondaryColor;
-  final double opacity;
-
-  const _SplitPainter({
-    required this.primaryColor,
-    required this.secondaryColor,
-    this.opacity = 0.14,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final topLeft = Path()
-      ..moveTo(0, 0)
-      ..lineTo(size.width, 0)
-      ..lineTo(0, size.height)
-      ..close();
-    final bottomRight = Path()
-      ..moveTo(size.width, 0)
-      ..lineTo(size.width, size.height)
-      ..lineTo(0, size.height)
-      ..close();
-    canvas.drawPath(topLeft,
-        Paint()..color = primaryColor.withOpacity(opacity));
-    canvas.drawPath(bottomRight,
-        Paint()..color = secondaryColor.withOpacity(opacity));
-  }
-
-  @override
-  bool shouldRepaint(_SplitPainter old) =>
-      old.primaryColor   != primaryColor   ||
-      old.secondaryColor != secondaryColor ||
-      old.opacity        != opacity;
 }

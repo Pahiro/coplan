@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pocketbase/pocketbase.dart';
 
 import '../core/pb_client.dart';
+import '../utils/dates.dart';
 import '../models/holiday_block.dart';
 import '../services/widget_cache_service.dart';
 import 'household_provider.dart';
@@ -44,8 +45,8 @@ class HolidayBlocksNotifier extends AsyncNotifier<List<HolidayBlock>> {
       'household':       hid,
       'name':            name,
       'assigned_parent': assignedParent,
-      'start_date':      _fmt(startDate),
-      'end_date':        _fmt(endDate),
+      'start_date':      isoDate(startDate),
+      'end_date':        isoDate(endDate),
       'notes':           notes ?? '',
       'created_by':      pb.authStore.record?.id ?? '',
     });
@@ -67,5 +68,3 @@ class HolidayBlocksNotifier extends AsyncNotifier<List<HolidayBlock>> {
   }
 }
 
-String _fmt(DateTime d) =>
-    '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';

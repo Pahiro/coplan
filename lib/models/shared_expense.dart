@@ -21,6 +21,7 @@ class SharedExpense {
   final String? paidBy;       // user id of parent who pays the vendor
   final bool active;
   final String createdBy;
+  final String? receipt;      // uploaded receipt file name (PocketBase file field)
   final DateTime created;
   final DateTime updated;
 
@@ -42,6 +43,7 @@ class SharedExpense {
     this.paidBy,
     this.active = true,
     required this.createdBy,
+    this.receipt,
     required this.created,
     required this.updated,
   });
@@ -70,6 +72,7 @@ class SharedExpense {
         paidBy:      _nonEmpty(j['paid_by'] as String?),
         active:      (j['active'] as bool?) ?? true,
         createdBy:   j['created_by'] as String? ?? '',
+        receipt:     _nonEmpty(j['receipt'] as String?),
         created:     DateTime.tryParse(j['created'] as String? ?? '') ?? DateTime.now(),
         updated:     DateTime.tryParse(j['updated'] as String? ?? '') ?? DateTime.now(),
       );

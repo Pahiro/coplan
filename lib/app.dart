@@ -8,12 +8,14 @@ import 'providers/realtime_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/calendar_screen.dart';
 import 'screens/dashboard_screen.dart';
+import 'screens/expense_export_screen.dart';
 import 'screens/expenses_screen.dart';
 import 'screens/household_setup_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/requests_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/notification_service.dart';
+import 'widgets/common.dart';
 
 class CoplanApp extends ConsumerWidget {
   const CoplanApp({super.key});
@@ -83,32 +85,36 @@ class _MainShellState extends ConsumerState<_MainShell> {
       appBar: AppBar(
         title: Text(_titles[_tabIndex]),
         actions: [
-          // Notification bell with badge
-          Stack(
-            alignment: Alignment.center,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.notifications_outlined),
-                tooltip: 'Requests',
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const RequestsScreen()),
-                ),
+          // Expenses-tab actions: export & settle-up (keeps the tab to one FAB)
+          if (_tabIndex == 2) ...[
+            IconButton(
+              icon: const Icon(Icons.download_outlined),
+              tooltip: 'Export expenses CSV',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ExpenseExportScreen()),
               ),
-              if (pendingCount > 0)
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: const BoxDecoration(
-                        color: Colors.red, shape: BoxShape.circle),
-                    child: Text('$pendingCount',
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 10)),
-                  ),
-                ),
-            ],
+            ),
+            Consumer(
+              builder: (context, ref, _) => IconButton(
+                icon: const Icon(Icons.handshake_outlined),
+                tooltip: 'Settle up',
+                onPressed: () => showSettleUpDialog(context, ref),
+              ),
+            ),
+          ],
+          // Notification bell with badge
+          IconButton(
+            icon: Badge(
+              isLabelVisible: pendingCount > 0,
+              label: Text('$pendingCount'),
+              child: const Icon(Icons.notifications_outlined),
+            ),
+            tooltip: 'Requests',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const RequestsScreen()),
+            ),
           ),
           if (queuedCount > 0)
             Tooltip(
@@ -136,7 +142,15 @@ class _MainShellState extends ConsumerState<_MainShell> {
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Sign out',
-            onPressed: () => ref.read(authProvider.notifier).logout(),
+            onPressed: () async {
+              final ok = await confirmDialog(
+                context,
+                title: 'Sign out?',
+                body: 'You can sign back in with your email and password.',
+                action: 'Sign out',
+              );
+              if (ok) ref.read(authProvider.notifier).logout();
+            },
           ),
         ],
       ),

@@ -15,12 +15,18 @@ class PendingOp {
   final Map<String, dynamic> body;
   final String? recordId; // set for 'update' ops
 
+  /// When set on a create op, a follow-up `expense_splits` record is created
+  /// after the parent record, with `expense` pointing at the new record id.
+  /// Used so an offline expense+split is queued as one logical operation.
+  final Map<String, dynamic>? splitBody;
+
   const PendingOp({
     required this.id,
     required this.collection,
     required this.method,
     required this.body,
     this.recordId,
+    this.splitBody,
   });
 
   Map<String, dynamic> toJson() => {
@@ -29,6 +35,7 @@ class PendingOp {
         'method': method,
         'body': body,
         if (recordId != null) 'recordId': recordId,
+        if (splitBody != null) 'splitBody': splitBody,
       };
 
   factory PendingOp.fromJson(Map<String, dynamic> j) => PendingOp(
@@ -37,6 +44,9 @@ class PendingOp {
         method: j['method'] as String,
         body: Map<String, dynamic>.from(j['body'] as Map),
         recordId: j['recordId'] as String?,
+        splitBody: j['splitBody'] != null
+            ? Map<String, dynamic>.from(j['splitBody'] as Map)
+            : null,
       );
 }
 
@@ -85,7 +95,11 @@ class QueueService {
     for (final op in ops) {
       try {
         if (op.method == 'create') {
-          await pb.collection(op.collection).create(body: op.body);
+          final rec = await pb.collection(op.collection).create(body: op.body);
+          if (op.splitBody != null) {
+            await pb.collection('expense_splits').create(
+                body: {...op.splitBody!, 'expense': rec.id});
+          }
         } else {
           await pb
               .collection(op.collection)

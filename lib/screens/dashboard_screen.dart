@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../models/app_colors.dart';
 import '../models/resolved_event.dart';
 import '../providers/absence_provider.dart';
+import '../providers/colors_provider.dart';
 import '../providers/custody_provider.dart';
 import '../providers/expense_provider.dart';
 import '../providers/schedule_provider.dart';
@@ -12,6 +14,7 @@ import '../providers/update_provider.dart';
 import '../services/notification_service.dart';
 import '../services/update_service.dart';
 import '../services/widget_cache_service.dart';
+import '../utils/dates.dart';
 import '../widgets/absence_banner.dart';
 import '../widgets/new_action_sheet.dart';
 import '../widgets/timeline_card.dart';
@@ -93,9 +96,6 @@ class _ScheduleList extends ConsumerWidget {
     final tomorrow = today.add(const Duration(days: 1));
     final absences = ref.watch(absencePeriodsProvider).valueOrNull ?? [];
 
-    bool sameDay(DateTime a, DateTime b) =>
-        a.year == b.year && a.month == b.month && a.day == b.day;
-
     final todayAbsence    = absences.where((a) => a.coversDate(today)).firstOrNull;
     final tomorrowAbsence = absences.where((a) => a.coversDate(tomorrow)).firstOrNull;
 
@@ -106,14 +106,17 @@ class _ScheduleList extends ConsumerWidget {
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
       children: [
         const _ExpenseSummaryCard(),
-        _SectionLabel('Today — ${DateFormat('EEEE, d MMMM').format(today)}'),
+        _SectionLabel('Today — ${DateFormat('EEEE, d MMMM').format(today)}',
+            date: today),
         if (todayAbsence != null) AbsenceBanner(absence: todayAbsence),
         if (todayEvents.isEmpty)
           const _EmptySlot()
         else
           ...todayEvents.map((e) => TimelineCard(event: e)),
         const SizedBox(height: 20),
-        _SectionLabel('Tomorrow — ${DateFormat('EEEE, d MMMM').format(tomorrow)}'),
+        _SectionLabel(
+            'Tomorrow — ${DateFormat('EEEE, d MMMM').format(tomorrow)}',
+            date: tomorrow),
         if (tomorrowAbsence != null) AbsenceBanner(absence: tomorrowAbsence),
         if (tomorrowEvents.isEmpty)
           const _EmptySlot()
@@ -124,19 +127,51 @@ class _ScheduleList extends ConsumerWidget {
   }
 }
 
-class _SectionLabel extends StatelessWidget {
+/// Section header. When [date] is given (and the household runs in custody
+/// mode) a colour-coded "X has the kids" chip answers the app's most basic
+/// question at a glance.
+class _SectionLabel extends ConsumerWidget {
   final String text;
-  const _SectionLabel(this.text);
+  final DateTime? date;
+  const _SectionLabel(this.text, {this.date});
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: Text(text,
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(fontWeight: FontWeight.bold)),
-      );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final owner =
+        date != null ? ref.watch(dayOwnerProvider(date!)) : null;
+    final colors = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(text,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold)),
+          ),
+          if (owner != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: colors.parentLightColor(owner),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '$owner has the kids',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: colors.parentColor(owner),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class _EmptySlot extends StatelessWidget {
@@ -163,6 +198,11 @@ class _ExpenseSummaryCard extends ConsumerWidget {
     if (summary == null || summary.isEmpty) return const SizedBox.shrink();
 
     final cs = Theme.of(context).colorScheme;
+    final positive = Theme.of(context).brightness == Brightness.dark
+        ? Colors.green.shade400
+        : Colors.green.shade700;
+    final net = summary.netCents;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       child: Padding(
@@ -176,18 +216,24 @@ class _ExpenseSummaryCard extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (summary.owedToYou > 0)
-                    Text('Owed to you: ${summary.owedToYouFormatted}',
-                        style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.green.shade700)),
-                  if (summary.youOwe > 0)
-                    Text('You owe: ${summary.youOweFormatted}',
-                        style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            color: cs.error)),
+                  // Net first — the number one actually settles.
+                  if (net != 0)
+                    Text(
+                      net > 0
+                          ? 'Net: you are owed ${summary.netFormatted}'
+                          : 'Net: you owe ${summary.netFormatted}',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: net > 0 ? positive : cs.error),
+                    ),
+                  if (summary.owedToYou > 0 && summary.youOwe > 0)
+                    Text(
+                      'Owed to you ${summary.owedToYouFormatted} · '
+                      'you owe ${summary.youOweFormatted}',
+                      style: TextStyle(
+                          fontSize: 11, color: cs.onSurfaceVariant),
+                    ),
                   if (summary.overdueCount > 0)
                     Text('${summary.overdueCount} overdue',
                         style: TextStyle(fontSize: 11, color: cs.error)),
@@ -341,7 +387,7 @@ class _UpdateBannerState extends ConsumerState<_UpdateBanner> {
                         : 'Version ${info.latestVersion} is ready to install',
                     style: TextStyle(
                         fontSize: 12,
-                        color: scheme.onPrimaryContainer.withOpacity(0.8)),
+                        color: scheme.onPrimaryContainer.withValues(alpha: 0.8)),
                   ),
                 ],
               ),

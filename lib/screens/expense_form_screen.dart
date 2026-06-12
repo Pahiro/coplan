@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 
+import '../core/expense_categories.dart';
 import '../models/shared_expense.dart';
 import '../providers/auth_provider.dart';
 import '../providers/expense_provider.dart';
 import '../providers/household_provider.dart';
+import '../widgets/common.dart';
 
 class ExpenseFormScreen extends ConsumerStatefulWidget {
   /// Pass an existing expense to edit; null = create new.
@@ -29,6 +33,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
   int? _dueDay;
   int _splitPercent = 100;
   bool _saving = false;
+  XFile? _receipt;
 
   bool get _isEditing => widget.existing != null;
 
@@ -48,20 +53,21 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
     }
   }
 
-  static const _categories = [
-    ('education', 'Education'),
-    ('sport',     'Sport'),
-    ('medical',   'Medical'),
-    ('clothing',  'Clothing'),
-    ('other',     'Other'),
-  ];
-
   @override
   void dispose() {
     _titleCtrl.dispose();
     _descCtrl.dispose();
     _amountCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickReceipt() async {
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1600,
+      imageQuality: 85,
+    );
+    if (picked != null) setState(() => _receipt = picked);
   }
 
   @override
@@ -118,10 +124,11 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
 
             // Category
             DropdownButtonFormField<String>(
-              value: _category,
+              initialValue: _category,
               decoration: const InputDecoration(labelText: 'Category'),
-              items: _categories
-                  .map((c) => DropdownMenuItem(value: c.$1, child: Text(c.$2)))
+              items: ExpenseCategory.all
+                  .map((c) =>
+                      DropdownMenuItem(value: c.id, child: Text(c.label)))
                   .toList(),
               onChanged: (v) => setState(() => _category = v ?? 'other'),
             ),
@@ -129,7 +136,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
 
             // Child
             DropdownButtonFormField<String>(
-              value: _childName,
+              initialValue: _childName,
               decoration: const InputDecoration(labelText: 'For child'),
               items: [
                 const DropdownMenuItem(value: 'All', child: Text('All children')),
@@ -149,7 +156,19 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
               ),
               maxLines: 2,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+
+            // Receipt photo
+            OutlinedButton.icon(
+              onPressed: _pickReceipt,
+              icon: const Icon(Icons.receipt_long, size: 18),
+              label: Text(_receipt != null
+                  ? 'Receipt attached — tap to replace'
+                  : widget.existing?.receipt != null
+                      ? 'Replace receipt photo'
+                      : 'Attach receipt photo (optional)'),
+            ),
+            const SizedBox(height: 4),
 
             // Recurring toggle
             SwitchListTile(
@@ -162,7 +181,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
             if (_isRecurring) ...[
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                value: _recurrence,
+                initialValue: _recurrence,
                 decoration: const InputDecoration(labelText: 'Frequency'),
                 items: const [
                   DropdownMenuItem(value: 'monthly',   child: Text('Monthly')),
@@ -174,6 +193,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
               ),
               const SizedBox(height: 12),
               TextFormField(
+                initialValue: _dueDay?.toString(),
                 decoration: const InputDecoration(
                   labelText: 'Due day of month',
                   hintText: '1–28',
@@ -219,15 +239,11 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
             const SizedBox(height: 24),
 
             // Save button
-            FilledButton.icon(
-              onPressed: _saving ? null : () => _save(otherParent?.userId),
-              icon: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.check),
-              label: Text(_saving ? 'Saving…' : (_isEditing ? 'Update Expense' : 'Create Expense')),
+            BusyButton(
+              busy: _saving,
+              onPressed: () => _save(otherParent?.userId),
+              icon: const Icon(Icons.check),
+              child: Text(_isEditing ? 'Update Expense' : 'Create Expense'),
             ),
           ],
         ),
@@ -258,6 +274,15 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
       }
     }
 
+    http.MultipartFile? receiptFile;
+    if (_receipt != null) {
+      receiptFile = http.MultipartFile.fromBytes(
+        'receipt',
+        await _receipt!.readAsBytes(),
+        filename: _receipt!.name,
+      );
+    }
+
     try {
       if (_isEditing) {
         await ref.read(expensesProvider.notifier).updateExpense(
@@ -271,6 +296,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
               recurrence: _isRecurring ? _recurrence : null,
               dueDay: _isRecurring ? _dueDay : null,
               nextDueDate: nextDue,
+              receipt: receiptFile,
             );
       } else {
         await ref.read(expensesProvider.notifier).createExpense(
@@ -286,16 +312,13 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
               startDate: DateTime.now(),
               splitToUserId: otherParentId,
               splitPercent: _splitPercent,
+              receipt: receiptFile,
             );
       }
 
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
+      if (mounted) showErrorSnack(context, e);
     } finally {
       if (mounted) setState(() => _saving = false);
     }

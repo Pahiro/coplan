@@ -8,6 +8,8 @@ import '../providers/colors_provider.dart';
 import '../providers/custody_provider.dart';
 import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
+import '../utils/dates.dart';
+import 'common.dart';
 import 'custody_request_edit_sheet.dart';
 import 'event_edit_sheet.dart';
 
@@ -33,11 +35,8 @@ class TimelineCard extends ConsumerWidget {
     final parentColor = colors.parentColor(parent);
     final parentLight = colors.parentLightColor(parent);
 
-    final timeStr =
-        '${event.time.hour.toString().padLeft(2, '0')}:${event.time.minute.toString().padLeft(2, '0')}';
-    final endTimeStr = event.endTime != null
-        ? '${event.endTime!.hour.toString().padLeft(2, '0')}:${event.endTime!.minute.toString().padLeft(2, '0')}'
-        : null;
+    final timeStr    = fmtTime(event.time);
+    final endTimeStr = event.endTime != null ? fmtTime(event.endTime!) : null;
 
     return Opacity(
       opacity: isGreyed ? 0.45 : 1.0,
@@ -71,7 +70,7 @@ class TimelineCard extends ConsumerWidget {
                     if (endTimeStr != null) ...[
                       Text(
                         '–',
-                        style: TextStyle(fontSize: 9, color: parentColor.withOpacity(0.6)),
+                        style: TextStyle(fontSize: 9, color: parentColor.withValues(alpha: 0.6)),
                       ),
                       Text(
                         endTimeStr,
@@ -227,7 +226,7 @@ class TimelineCard extends ConsumerWidget {
                       decoration: BoxDecoration(
                         color: parentLight,
                         borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: parentColor.withOpacity(0.4)),
+                        border: Border.all(color: parentColor.withValues(alpha: 0.4)),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -256,12 +255,12 @@ class TimelineCard extends ConsumerWidget {
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(color: Colors.teal.withValues(alpha: 0.4)),
                       ),
-                      child: Row(
+                      child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(Icons.people_outline,
                               size: 11, color: Colors.teal),
-                          const SizedBox(width: 3),
+                          SizedBox(width: 3),
                           Text(
                             'Both',
                             style: TextStyle(
@@ -369,12 +368,13 @@ class _EventMenu extends ConsumerWidget {
     // ── Recurring (virtual) occurrences ───────────────────────────────────────
     if (event.recurringId != null) {
       if (action == _MenuAction.stopRepeating) {
-        final confirm = await _confirmDialog(
+        final confirm = await confirmDialog(
           context,
           title: 'Stop repeating?',
           body: 'Removes this standing arrangement from all future weeks. '
               'Past occurrences already recorded are kept.',
           action: 'Stop',
+          destructive: true,
         );
         if (confirm && context.mounted) {
           await ref
@@ -395,21 +395,17 @@ class _EventMenu extends ConsumerWidget {
 
       if (action == _MenuAction.edit) {
         if (!context.mounted) return;
-        await showModalBottomSheet<void>(
-          context: context,
-          isScrollControlled: true,
-          shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-          builder: (_) => CustodyRequestEditSheet(request: request),
-        );
+        await showAppSheet<void>(context,
+            builder: (_) => CustodyRequestEditSheet(request: request));
         return;
       }
       if (action == _MenuAction.delete) {
-        final confirm = await _confirmDialog(
+        final confirm = await confirmDialog(
           context,
           title: 'Delete request?',
           body: 'This removes the custody request and restores the original schedule.',
           action: 'Delete',
+          destructive: true,
         );
         if (confirm && context.mounted) {
           await ref
@@ -426,20 +422,16 @@ class _EventMenu extends ConsumerWidget {
         return;
 
       case _MenuAction.edit:
-        await showModalBottomSheet<void>(
-          context: context,
-          isScrollControlled: true,
-          shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-          builder: (_) => EventEditSheet(event: event),
-        );
+        await showAppSheet<void>(context,
+            builder: (_) => EventEditSheet(event: event));
 
       case _MenuAction.removeOverride:
-        final confirm = await _confirmDialog(
+        final confirm = await confirmDialog(
           context,
           title: 'Remove override?',
           body: 'This will revert the event to the base schedule for this day.',
           action: 'Remove',
+          destructive: true,
         );
         if (confirm && context.mounted) {
           await ref
@@ -451,11 +443,12 @@ class _EventMenu extends ConsumerWidget {
         final label = event.ruleId != null && event.overrideId == null
             ? 'Delete standing event?\n\nThis removes it from every future week.'
             : 'Delete this event?';
-        final confirm = await _confirmDialog(
+        final confirm = await confirmDialog(
           context,
           title: 'Delete event?',
           body: label,
           action: 'Delete',
+          destructive: true,
         );
         if (!confirm || !context.mounted) return;
         if (event.overrideId != null) {
@@ -470,30 +463,6 @@ class _EventMenu extends ConsumerWidget {
     }
   }
 
-  Future<bool> _confirmDialog(
-    BuildContext context, {
-    required String title,
-    required String body,
-    required String action,
-  }) async {
-    return await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: Text(title),
-            content: Text(body),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Cancel')),
-              TextButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  style: TextButton.styleFrom(foregroundColor: Colors.red),
-                  child: Text(action)),
-            ],
-          ),
-        ) ??
-        false;
-  }
 }
 
 enum _MenuAction { edit, delete, removeOverride, stopRepeating }
@@ -520,9 +489,9 @@ class _ChildChipRow extends StatelessWidget {
   Widget _chip(String name, Color color) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.15),
+          color: color.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: color.withOpacity(0.4)),
+          border: Border.all(color: color.withValues(alpha: 0.4)),
         ),
         child: Text(
           name,

@@ -108,7 +108,7 @@ class ColorSettingRow extends StatelessWidget {
               spacing: 10,
               runSpacing: 10,
               children: presets.map((c) {
-                final isSelected = c.value == current.value;
+                final isSelected = c.toARGB32() == current.toARGB32();
                 return GestureDetector(
                   onTap: () {
                     onChanged(c);

@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../providers/household_provider.dart';
 import 'settings/account_settings_screen.dart';
@@ -70,8 +72,8 @@ class SettingsScreen extends ConsumerWidget {
                 ],
                 const Divider(height: 1),
                 ListTile(
-                  leading: const Icon(Icons.swap_horiz_outlined),
-                  title: const Text('Custody'),
+                  leading: const Icon(Icons.beach_access_outlined),
+                  title: const Text('Time away'),
                   subtitle: const Text('Holiday periods and absences'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => push(const CustodySettingsScreen()),
@@ -96,6 +98,22 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 24),
+
+          // Android APK download (shown on web only)
+          if (kIsWeb)
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.android),
+                title: const Text('Download Android App'),
+                subtitle: const Text('Install the native app for the best experience'),
+                trailing: const Icon(Icons.download_outlined),
+                onTap: () => launchUrl(
+                  Uri.parse('https://coplan.vdgryp.co.za/coplan-latest.apk'),
+                  mode: LaunchMode.externalApplication,
+                ),
+              ),
+            ),
+          if (kIsWeb) const SizedBox(height: 24),
 
           // Version footer — PackageInfo works on Android; web falls back to
           // the APP_VERSION dart-define baked in at build time by deploy.sh.

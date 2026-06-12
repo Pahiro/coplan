@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
 import 'add_event_sheet.dart';
+import 'common.dart';
 import 'mark_absence_sheet.dart';
 import 'new_request_sheet.dart';
 
 /// Opens the unified "New…" chooser sheet.
-/// Pass [initialDate] so the event sheet pre-fills the selected calendar day.
+/// Pass [initialDate] so the event/request sheets pre-fill the selected
+/// calendar day.
 Future<void> showNewActionSheet(BuildContext context,
     {DateTime? initialDate}) {
   return showModalBottomSheet<void>(
@@ -22,13 +24,7 @@ class _NewActionSheet extends StatelessWidget {
 
   void _open(BuildContext context, Widget sheet) {
     Navigator.pop(context);
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => sheet,
-    );
+    showAppSheet<void>(context, builder: (_) => sheet);
   }
 
   @override
@@ -50,7 +46,8 @@ class _NewActionSheet extends StatelessWidget {
               title: const Text('Custody request'),
               subtitle: const Text('Swap a day or arrange a time window'),
               trailing: const Icon(Icons.chevron_right),
-              onTap: () => _open(context, const NewRequestSheet()),
+              onTap: () =>
+                  _open(context, NewRequestSheet(initialDate: initialDate)),
             ),
             ListTile(
               leading: const Icon(Icons.event_outlined),

@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../providers/absence_provider.dart';
 import '../providers/auth_provider.dart';
+import 'common.dart';
 
 /// Bottom sheet for marking an absence period.
 ///
@@ -78,11 +79,7 @@ class _MarkAbsenceSheetState extends ConsumerState<MarkAbsenceSheet> {
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       setState(() => _saving = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to save absence: $e')),
-        );
-      }
+      if (mounted) showErrorSnack(context, e);
     }
   }
 
@@ -150,16 +147,12 @@ class _MarkAbsenceSheetState extends ConsumerState<MarkAbsenceSheet> {
           const SizedBox(height: 20),
 
           // ── Actions ───────────────────────────────────────────────────────
-          FilledButton(
-            onPressed: (hasRange && _reasonCtrl.text.trim().isNotEmpty && !_saving)
+          BusyButton(
+            busy: _saving,
+            onPressed: (hasRange && _reasonCtrl.text.trim().isNotEmpty)
                 ? _save
                 : null,
-            child: _saving
-                ? const SizedBox(
-                    height: 18, width: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
-                : const Text('Save absence'),
+            child: const Text('Save absence'),
           ),
           const SizedBox(height: 8),
           TextButton(

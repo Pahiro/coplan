@@ -7,6 +7,7 @@ import '../../models/rotation_scheme.dart';
 import '../../providers/colors_provider.dart';
 import '../../providers/household_provider.dart';
 import '../../providers/schedule_provider.dart';
+import '../../utils/dates.dart';
 
 class ScheduleSettingsScreen extends ConsumerWidget {
   const ScheduleSettingsScreen({super.key});
@@ -246,7 +247,7 @@ class _RotationSchemePicker extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             DropdownButtonFormField<String>(
-              value: _presets.any((p) => p.type == current.type)
+              initialValue: _presets.any((p) => p.type == current.type)
                   ? current.type
                   : 'weekly',
               decoration: const InputDecoration(
@@ -360,9 +361,6 @@ class _HandoverSetupCardState extends ConsumerState<_HandoverSetupCard> {
   TimeOfDay _timeB     = const TimeOfDay(hour: 12, minute: 0);
   bool      _saving    = false;
 
-  String _fmtTime(TimeOfDay t) =>
-      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-
   String _dayName(int d) => const {
     1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday',
     5: 'Friday',  6: 'Saturday', 7: 'Sunday',
@@ -384,7 +382,7 @@ class _HandoverSetupCardState extends ConsumerState<_HandoverSetupCard> {
       await notifier.create(
         childName:    'All',
         dayOfWeek:    _dayOfWeek,
-        eventTime:    _fmtTime(_timeA),
+        eventTime:    fmtTime(_timeA),
         activity:     'Weekly handover',
         location:     '',
         isShared:     false,
@@ -393,7 +391,7 @@ class _HandoverSetupCardState extends ConsumerState<_HandoverSetupCard> {
       await notifier.create(
         childName:    'All',
         dayOfWeek:    _dayOfWeek,
-        eventTime:    _fmtTime(_timeB),
+        eventTime:    fmtTime(_timeB),
         activity:     'Weekly handover',
         location:     '',
         isShared:     false,
@@ -446,7 +444,7 @@ class _HandoverSetupCardState extends ConsumerState<_HandoverSetupCard> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   DropdownButtonFormField<int>(
-                    value: _dayOfWeek,
+                    initialValue: _dayOfWeek,
                     decoration: const InputDecoration(
                       labelText: 'Handover day',
                       border: OutlineInputBorder(),
@@ -462,7 +460,7 @@ class _HandoverSetupCardState extends ConsumerState<_HandoverSetupCard> {
                     contentPadding: EdgeInsets.zero,
                     title: Text('$parentA drops at'),
                     trailing: TextButton(
-                      child: Text(_fmtTime(_timeA),
+                      child: Text(fmtTime(_timeA),
                           style: const TextStyle(fontSize: 16)),
                       onPressed: () async {
                         final t = await showTimePicker(
@@ -475,7 +473,7 @@ class _HandoverSetupCardState extends ConsumerState<_HandoverSetupCard> {
                     contentPadding: EdgeInsets.zero,
                     title: Text('$parentB drops at'),
                     trailing: TextButton(
-                      child: Text(_fmtTime(_timeB),
+                      child: Text(fmtTime(_timeB),
                           style: const TextStyle(fontSize: 16)),
                       onPressed: () async {
                         final t = await showTimePicker(
@@ -531,9 +529,9 @@ class _RecurringRulesSection extends ConsumerWidget {
           ..sort((a, b) => a.dayOfWeek.compareTo(b.dayOfWeek));
 
         if (active.isEmpty) {
-          return Card(
-            margin: const EdgeInsets.only(bottom: 16),
-            child: const Padding(
+          return const Card(
+            margin: EdgeInsets.only(bottom: 16),
+            child: Padding(
               padding: EdgeInsets.all(16),
               child: Text('No recurring rules — use the "Repeat every …" toggle '
                   'when creating a pickup or drop-off request.',

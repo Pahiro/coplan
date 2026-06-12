@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:share_plus/share_plus.dart' show Share;
 
 import '../../models/app_colors.dart';
 import '../../providers/auth_provider.dart';
@@ -286,33 +287,46 @@ class _HouseholdCard extends ConsumerWidget {
       return;
     }
     if (!context.mounted) return;
+
+    final inviteUrl =
+        'https://coplan.vdgryp.co.za/?invite=${Uri.encodeComponent(code)}';
+
     await showDialog<void>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: Text('Invite ${role == 'parent' ? 'a parent' : 'a helper'}'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Share this code. They sign up, then choose '
-                '"Join with invite code" and enter it.'),
+            const Text(
+                'Share the link below. Tapping it takes them straight to '
+                'account creation with the invite pre-filled.'),
             const SizedBox(height: 16),
+            // Invite link
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(8),
               ),
-              alignment: Alignment.center,
               child: SelectableText(
-                code,
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 2,
-                ),
+                inviteUrl,
+                style: const TextStyle(fontSize: 13),
               ),
+            ),
+            const SizedBox(height: 12),
+            // Raw code as fallback
+            Row(
+              children: [
+                Text('Code: ', style: Theme.of(ctx).textTheme.bodySmall),
+                Text(
+                  code,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, letterSpacing: 2),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             Text('Expires in 72 hours.',
@@ -324,16 +338,27 @@ class _HouseholdCard extends ConsumerWidget {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(ctx),
             child: const Text('Done'),
           ),
-          FilledButton.icon(
+          OutlinedButton.icon(
             icon: const Icon(Icons.copy, size: 16),
-            label: const Text('Copy code'),
+            label: const Text('Copy link'),
             onPressed: () {
-              Clipboard.setData(ClipboardData(text: code));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Invite code copied')),
+              Clipboard.setData(ClipboardData(text: inviteUrl));
+              ScaffoldMessenger.of(ctx).showSnackBar(
+                const SnackBar(content: Text('Invite link copied')),
+              );
+            },
+          ),
+          FilledButton.icon(
+            icon: const Icon(Icons.share, size: 16),
+            label: const Text('Share'),
+            onPressed: () {
+              Navigator.pop(ctx);
+              Share.share(
+                'Join me on CoPlan: $inviteUrl',
+                subject: 'CoPlan family invite',
               );
             },
           ),
@@ -419,7 +444,7 @@ class _ChildrenCard extends ConsumerWidget {
       builder: (_) => AlertDialog(
         title: Text('Remove $name?'),
         content: Text(
-            "$name will be removed from the household. Existing events that "
+            '$name will be removed from the household. Existing events that '
             "reference $name stay in the record but won't match a child colour."),
         actions: [
           TextButton(

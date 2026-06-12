@@ -192,8 +192,19 @@ class CustodyRequestsNotifier
 
   // ── Write: respond / complete ──────────────────────────────────────────────
 
-  Future<void> respond(String id, {required bool accept}) async {
-    final body = {'status': accept ? 'accepted' : 'declined'};
+  /// Accept or decline a request. An optional [note] (e.g. a decline reason)
+  /// is appended to the request's note so the requester sees the context.
+  Future<void> respond(String id, {required bool accept, String? note}) async {
+    final body = <String, dynamic>{'status': accept ? 'accepted' : 'declined'};
+    if (note != null && note.trim().isNotEmpty) {
+      final existing = state.valueOrNull
+          ?.firstWhereOrNull((r) => r.id == id)?.note;
+      final prefix = accept ? 'Accepted' : 'Declined';
+      body['note'] = [
+        if (existing != null && existing.isNotEmpty) existing,
+        '$prefix: ${note.trim()}',
+      ].join('\n');
+    }
     try {
       await pb.collection('custody_requests').update(id, body: body);
     } catch (e) {
@@ -247,6 +258,11 @@ class CustodyRequestsNotifier
     final auth = ref.read(authProvider).valueOrNull;
     final myId = auth?.userId ?? '';
     final hid  = ref.read(householdProvider).valueOrNull?.id;
+    // Every create MUST stamp household — the hardened access rules deny
+    // unstamped records with an opaque 400 otherwise.
+    if (hid == null) {
+      throw Exception('No active household yet — please try again in a moment.');
+    }
     final body = {
       'target_date':     targetDate,
       'child_name':      childName,
@@ -261,7 +277,7 @@ class CustodyRequestsNotifier
       'location':        location,
       if (endTime != null && endTime.isNotEmpty) 'end_time': endTime,
       if (note != null && note.isNotEmpty) 'note': note,
-      if (hid != null) 'household': hid,
+      'household': hid,
     };
     try {
       await pb.collection('manual_overrides').create(body: body);

@@ -28,6 +28,14 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Deep links: handles https://coplan.vdgryp.co.za/?invite=XXXX -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https"
+                      android:host="coplan.vdgryp.co.za"/>
+            </intent-filter>
         </activity>
 
         <!-- CoPlan home-screen widgets (3 styles — add any from the widget picker) -->

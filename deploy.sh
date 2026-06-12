@@ -6,7 +6,7 @@
 #   ./deploy.sh [--skip-build] [--skip-apk] [--skip-backend] [--skip-web]
 #
 # Prerequisites:
-#   - SSH key access to root@192.168.1.119
+#   - SSH key access to root@192.168.1.219
 #   - Flutter SDK in PATH
 #   - PB_URL defaults to https://coplan.vdgryp.co.za
 #
@@ -23,6 +23,7 @@ SKIP_BUILD=false
 SKIP_APK=false
 SKIP_BACKEND=false
 SKIP_WEB=false
+NO_BUMP=false
 
 for arg in "$@"; do
     case $arg in
@@ -30,8 +31,9 @@ for arg in "$@"; do
         --skip-apk)     SKIP_APK=true ;;
         --skip-backend) SKIP_BACKEND=true ;;
         --skip-web)     SKIP_WEB=true ;;
+        --no-bump)      NO_BUMP=true ;;
         --help|-h)
-            echo "Usage: ./deploy.sh [--skip-build] [--skip-apk] [--skip-backend] [--skip-web]"
+            echo "Usage: ./deploy.sh [--skip-build] [--skip-apk] [--skip-backend] [--skip-web] [--no-bump]"
             exit 0 ;;
     esac
 done
@@ -76,8 +78,10 @@ bump_version() {
 
 # ── 1. Bump version ──────────────────────────────────────────────────────────
 
-if [ "$SKIP_BUILD" = false ] && [ "$SKIP_APK" = false ]; then
+if [ "$SKIP_BUILD" = false ] && [ "$SKIP_APK" = false ] && [ "$NO_BUMP" = false ]; then
     bump_version
+else
+    info "Version: $(get_version) (no bump)"
 fi
 
 # ── 2. Backend: backup, deploy migrations + hooks ────────────────────────────
@@ -141,6 +145,20 @@ if [ "$SKIP_APK" = false ]; then
         UPDATE app_settings SET value = '$APK_URL'       WHERE key = 'apk_url';
     \""
     ok "app_settings updated"
+
+    # update_notes drives the in-app update banner — a stale value shows users
+    # the previous release's notes, so it's read from the committed
+    # RELEASE_NOTES file on every deploy. Avoid double quotes in the file.
+    NOTES_FILE="$SCRIPT_DIR/RELEASE_NOTES"
+    if [ -f "$NOTES_FILE" ]; then
+        NOTES=$(sed "s/'/''/g" "$NOTES_FILE")
+        ssh "$SERVER" "sqlite3 $PB_DIR/pb_data/data.db \"
+            UPDATE app_settings SET value = '$NOTES' WHERE key = 'update_notes';
+        \""
+        ok "update_notes set from RELEASE_NOTES"
+    else
+        echo -e "\033[1;33m[WARN]\033[0m RELEASE_NOTES missing — update_notes NOT changed (users will see stale notes)"
+    fi
 
     info "Verifying Cloudflare cache-bust..."
     HTTP_STATUS=$(curl -sI "${APK_URL}" | grep -i "cf-cache-status" || echo "unknown")

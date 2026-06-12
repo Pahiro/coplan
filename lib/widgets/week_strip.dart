@@ -1,9 +1,8 @@
-import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
-import '../engine/resolution_engine.dart';
+import '../engine/engine_factory.dart';
 import '../models/app_colors.dart';
 import '../models/custody_request.dart';
 import '../models/recurring_arrangement.dart';
@@ -14,6 +13,8 @@ import '../providers/colors_provider.dart';
 import '../providers/custody_provider.dart';
 import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
+import '../utils/dates.dart';
+import 'day_split.dart';
 
 /// Horizontal 7-day strip for the calendar screen.
 /// Each cell shows the day's owning parent colour and highlights today.
@@ -51,71 +52,31 @@ class WeekStrip extends ConsumerWidget {
       loading: () => const SizedBox(height: 72),
       error: (_, __) => const SizedBox(height: 72),
       data: (rules) {
-        final household = ref.watch(householdProvider).valueOrNull;
-        final engine = ResolutionEngine(
-            baseRules:             rules,
-            overrides:             const [],
-            custodyRequests:       custodyRequests,
-            weekdayRules:          weekdayRules,
-            recurringArrangements: recurring,
-            absencePeriods:        absences,
-            holidayBlocks:         holidays,
-            rotationAnchor:        household?.rotationAnchorDate ?? DateTime(2025, 1, 6),
-            rotationParentEven:    household?.rotationParentEvenName ?? 'Bennet',
-            rotationParentOdd:     household?.rotationParentOddName ?? 'Jana',
-            rotationScheme:        household?.rotationScheme,
-            householdMode:         household?.mode ?? 'custody');
+        final engine = buildEngine(
+          household:             ref.watch(householdProvider).valueOrNull,
+          baseRules:             rules,
+          custodyRequests:       custodyRequests,
+          weekdayRules:          weekdayRules,
+          recurringArrangements: recurring,
+          absencePeriods:        absences,
+          holidayBlocks:         holidays,
+        );
         return SizedBox(
           height: 72,
           child: Row(
             children: List.generate(7, (i) {
-              final day    = weekStart.add(Duration(days: i));
-              final window = engine.custodyWindows(day).firstOrNull;
-
-              // Default: schedule owner with no split.
-              String effectiveOwner = engine.dayOwner(day);
-              Color? windowToColor;
-
-              if (window != null) {
-                final windowParent = window.toParent;
-                // Use solid window-recipient colour only when all events are
-                // covered AND the window has no definite return time.  If a
-                // return time is set the base owner gets the kids back, so
-                // show a split even when all scheduled events fall inside the
-                // window.
-                final windowHasDefiniteReturn =
-                    !window.returnTimeTbd && window.returnTime != null;
-                if (engine.windowCoversAllEvents(day) && !windowHasDefiniteReturn) {
-                  effectiveOwner = windowParent;
-                } else {
-                  // Partial overlap OR window ends at a known time → split.
-                  windowToColor = colors.parentColor(windowParent);
-                }
-              }
-
-              // Also check for a partial-day transfer — handles both the
-              // window-only and window+transfer cases (ISSUES #6.1).
-              if (windowToColor == null) {
-                final transfer = engine.dayTransferFor(day);
-                if (transfer != null) {
-                  final p = transfer.pickupTime.split(':');
-                  final pickupMin = int.parse(p[0]) * 60 + int.parse(p[1]);
-                  if (pickupMin > 0) {
-                    effectiveOwner = transfer.fromParent;
-                    windowToColor  = colors.parentColor(transfer.toParent);
-                  }
-                }
-              }
+              final day   = weekStart.add(Duration(days: i));
+              final split = computeDaySplit(engine, colors, day);
 
               return Expanded(
                 child: _DayCell(
                   day:           day,
-                  owner:         effectiveOwner,
-                  isSelected:    _sameDay(day, selectedDay),
-                  isToday:       _sameDay(day, DateTime.now()),
+                  owner:         split.owner,
+                  isSelected:    sameDay(day, selectedDay),
+                  isToday:       sameDay(day, DateTime.now()),
                   colors:        colors,
                   onTap:         () => onDaySelected(day),
-                  windowToColor: windowToColor,
+                  windowToColor: split.splitColor,
                 ),
               );
             }),
@@ -124,9 +85,6 @@ class WeekStrip extends ConsumerWidget {
       },
     );
   }
-
-  static bool _sameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
 }
 
 class _DayCell extends StatelessWidget {
@@ -154,11 +112,12 @@ class _DayCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final parentColor = colors.parentColor(owner);
-    final bg = isSelected ? parentColor : parentColor.withOpacity(0.15);
+    final bg = isSelected ? parentColor : parentColor.withValues(alpha: 0.15);
     final fg = isSelected ? Colors.white : parentColor;
 
-    return GestureDetector(
+    return InkWell(
       onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
@@ -182,7 +141,7 @@ class _DayCell extends StatelessWidget {
               if (windowToColor != null)
                 SizedBox.expand(
                   child: CustomPaint(
-                    painter: _SplitPainter(
+                    painter: SplitPainter(
                       primaryColor:   parentColor,
                       secondaryColor: windowToColor!,
                       opacity: isSelected ? 0.8 : 0.22,
@@ -227,42 +186,4 @@ class _DayCell extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Paints a diagonal split: [primaryColor] top-left, [secondaryColor] bottom-right.
-/// Opacity matches the month_grid soft-tint style.
-class _SplitPainter extends CustomPainter {
-  final Color  primaryColor;
-  final Color  secondaryColor;
-  final double opacity;
-
-  const _SplitPainter({
-    required this.primaryColor,
-    required this.secondaryColor,
-    this.opacity = 0.22,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final topLeft = Path()
-      ..moveTo(0, 0)
-      ..lineTo(size.width, 0)
-      ..lineTo(0, size.height)
-      ..close();
-    final bottomRight = Path()
-      ..moveTo(size.width, 0)
-      ..lineTo(size.width, size.height)
-      ..lineTo(0, size.height)
-      ..close();
-    canvas.drawPath(topLeft,
-        Paint()..color = primaryColor.withOpacity(opacity));
-    canvas.drawPath(bottomRight,
-        Paint()..color = secondaryColor.withOpacity(opacity));
-  }
-
-  @override
-  bool shouldRepaint(_SplitPainter old) =>
-      old.primaryColor   != primaryColor   ||
-      old.secondaryColor != secondaryColor ||
-      old.opacity        != opacity;
 }

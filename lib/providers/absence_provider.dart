@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pocketbase/pocketbase.dart';
 
 import '../core/pb_client.dart';
+import '../utils/dates.dart';
 import '../models/absence_period.dart';
 import '../services/widget_cache_service.dart';
 import 'household_provider.dart';
@@ -43,8 +44,8 @@ class AbsencePeriodsNotifier extends AsyncNotifier<List<AbsencePeriod>> {
     await pb.collection('absence_periods').create(body: {
       'household':     hid,
       'absent_parent': absentParent,
-      'start_date':    _fmt(startDate),
-      'end_date':      _fmt(endDate),
+      'start_date':    isoDate(startDate),
+      'end_date':      isoDate(endDate),
       'reason':        reason,
       'note':          note ?? '',
       'created_by':    pb.authStore.record?.id ?? '',
@@ -67,5 +68,3 @@ class AbsencePeriodsNotifier extends AsyncNotifier<List<AbsencePeriod>> {
   }
 }
 
-String _fmt(DateTime d) =>
-    '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';

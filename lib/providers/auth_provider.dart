@@ -42,12 +42,12 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
     state = await AsyncValue.guard(() async {
       final result =
           await pb.collection('users').authWithPassword(email, password);
-      _stampClientVersion(result.record?.id ?? '');
+      _stampClientVersion(result.record.id);
       return AuthState(
         isLoggedIn: true,
-        userId: result.record?.id,
-        userName: result.record?.data['name'] as String?,
-        activeHouseholdId: result.record?.data['active_household'] as String?,
+        userId: result.record.id,
+        userName: result.record.data['name'] as String?,
+        activeHouseholdId: result.record.data['active_household'] as String?,
       );
     });
   }
@@ -102,12 +102,12 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
       });
       final result =
           await pb.collection('users').authWithPassword(email, password);
-      _stampClientVersion(result.record?.id ?? '');
+      _stampClientVersion(result.record.id);
       return AuthState(
         isLoggedIn: true,
-        userId: result.record?.id,
-        userName: result.record?.data['name'] as String?,
-        activeHouseholdId: result.record?.data['active_household'] as String?,
+        userId: result.record.id,
+        userName: result.record.data['name'] as String?,
+        activeHouseholdId: result.record.data['active_household'] as String?,
       );
     });
   }

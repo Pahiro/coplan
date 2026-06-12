@@ -9,6 +9,9 @@ import '../models/weekday_rule.dart';
 import '../providers/custody_provider.dart';
 import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
+import '../utils/dates.dart';
+import 'common.dart';
+import 'form_fields.dart';
 
 /// Full edit form for an existing [CustodyRequest].
 /// Extracted so it can be shown from both [CustodyRequestTile]
@@ -41,11 +44,11 @@ class _CustodyRequestEditSheetState
     super.initState();
     final r = widget.request;
     _date             = r.date;
-    _selectedChildren = _parseChildName(r.childName);
-    _pickupTime       = _parseTime(r.pickupTime);
+    _selectedChildren = parseChildSelection(r.childName);
+    _pickupTime       = parseHHmm(r.pickupTime);
     _hasReturnTime    = !r.isDayTransfer;
     _returnTimeTbd    = r.returnTimeTbd;
-    _returnTime       = r.returnTime != null ? _parseTime(r.returnTime!) : null;
+    _returnTime       = r.returnTime != null ? parseHHmm(r.returnTime!) : null;
     _toParentCollects = r.toParentCollects;
     _toParentReturns  = r.toParentReturns;
     _noteCtrl.text    = r.note ?? '';
@@ -64,26 +67,6 @@ class _CustodyRequestEditSheetState
     _noteCtrl.dispose();
     super.dispose();
   }
-
-  /// "All" or empty → empty set; "Henri,Chris" → {"Henri","Chris"}.
-  static Set<String> _parseChildName(String v) =>
-      (v == 'All' || v.isEmpty) ? {} : v.split(',').map((s) => s.trim()).toSet();
-
-  /// Empty set → "All"; otherwise comma-joined sorted names.
-  static String _encodeChildName(Set<String> s, List<String> allNames) =>
-      s.isEmpty || s.length == allNames.length ? 'All' : s.toList().join(',');
-
-  TimeOfDay _parseTime(String hhmm) {
-    final p = hhmm.split(':');
-    return TimeOfDay(hour: int.parse(p[0]), minute: int.parse(p[1]));
-  }
-
-  String _fmtTime(TimeOfDay? t) => t != null
-      ? '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}'
-      : '—';
-
-  String _fmtDate(DateTime d) => DateFormat('EEE, d MMM yyyy').format(d);
-  String _isoDate(DateTime d)  => DateFormat('yyyy-MM-dd').format(d);
 
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
@@ -110,11 +93,11 @@ class _CustodyRequestEditSheetState
           (ref.read(householdChildNamesProvider)).map((c) => c.name).toList();
       await ref.read(custodyRequestsProvider.notifier).updateRequest(
             widget.request.id,
-            date:             _isoDate(_date),
-            childName:        _encodeChildName(_selectedChildren, allChildNames),
-            pickupTime:       _fmtTime(_pickupTime),
+            date:             isoDate(_date),
+            childName:        encodeChildSelection(_selectedChildren, allChildNames),
+            pickupTime:       fmtTime(_pickupTime),
             returnTime:       (_hasReturnTime && !_returnTimeTbd)
-                ? _fmtTime(_returnTime)
+                ? fmtTimeOr(_returnTime)
                 : null,
             returnTimeTbd:    _hasReturnTime && _returnTimeTbd,
             note:             _noteCtrl.text.isEmpty ? null : _noteCtrl.text,
@@ -139,13 +122,13 @@ class _CustodyRequestEditSheetState
           await recurring.upsert(
             dayOfWeek:        _date.weekday,
             toParent:         widget.request.toParent,
-            childName:        _encodeChildName(_selectedChildren, allChildNames),
-            pickupTime:       _fmtTime(_pickupTime),
+            childName:        encodeChildSelection(_selectedChildren, allChildNames),
+            pickupTime:       fmtTime(_pickupTime),
             returnTime:       null,
             returnTimeTbd:    false,
             toParentCollects: _toParentCollects,
             toParentReturns:  false,
-            startDate:        _isoDate(_date),
+            startDate:        isoDate(_date),
             note:             _noteCtrl.text.isEmpty ? null : _noteCtrl.text,
           );
         } else {
@@ -155,10 +138,7 @@ class _CustodyRequestEditSheetState
 
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Error: $e')));
-      }
+      if (mounted) showErrorSnack(context, e);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -167,10 +147,7 @@ class _CustodyRequestEditSheetState
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(
-        left: 24, right: 24, top: 24,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-      ),
+      padding: sheetPadding(context),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -184,43 +161,21 @@ class _CustodyRequestEditSheetState
             const SizedBox(height: 20),
 
             // Date
-            InkWell(
-              onTap: _pickDate,
-              borderRadius: BorderRadius.circular(4),
-              child: InputDecorator(
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.calendar_today_outlined),
-                  border: OutlineInputBorder(),
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                ),
-                child: Text(_fmtDate(_date),
-                    style: Theme.of(context).textTheme.bodyLarge),
-              ),
-            ),
+            PickerField.date(label: fmtDateLong(_date), onTap: _pickDate),
             const SizedBox(height: 12),
 
             // Child — multi-select chips; none selected = All
-            _ChildChips(
+            ChildChips(
               selected: _selectedChildren,
               onChanged: (s) => setState(() => _selectedChildren = s),
             ),
             const SizedBox(height: 12),
 
             // Pickup time
-            InkWell(
+            PickerField(
+              label:
+                  '${_toParentCollects ? 'Pickup' : 'Drop off'}: ${fmtTime(_pickupTime)}',
               onTap: () => _pickTime(_pickupTime, (t) => _pickupTime = t),
-              borderRadius: BorderRadius.circular(4),
-              child: InputDecorator(
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.schedule_outlined),
-                  border: OutlineInputBorder(),
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                ),
-                child: Text('${_toParentCollects ? 'Pickup' : 'Drop off'}: ${_fmtTime(_pickupTime)}',
-                    style: Theme.of(context).textTheme.bodyLarge),
-              ),
             ),
             const SizedBox(height: 8),
 
@@ -254,19 +209,9 @@ class _CustodyRequestEditSheetState
 
             if (_hasReturnTime) ...[
               if (!_returnTimeTbd)
-                InkWell(
+                PickerField(
+                  label: 'Return: ${fmtTimeOr(_returnTime)}',
                   onTap: () => _pickTime(_returnTime, (t) => _returnTime = t),
-                  borderRadius: BorderRadius.circular(4),
-                  child: InputDecorator(
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.schedule_outlined),
-                      border: OutlineInputBorder(),
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                    ),
-                    child: Text('Return: ${_fmtTime(_returnTime)}',
-                        style: Theme.of(context).textTheme.bodyLarge),
-                  ),
                 ),
               Row(children: [
                 Switch(
@@ -318,17 +263,10 @@ class _CustodyRequestEditSheetState
             ),
             const SizedBox(height: 20),
 
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _saving ? null : _save,
-                child: _saving
-                    ? const SizedBox(
-                        height: 18, width: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : const Text('Save'),
-              ),
+            BusyButton(
+              busy: _saving,
+              onPressed: _save,
+              child: const Text('Save'),
             ),
           ],
         ),
@@ -359,7 +297,9 @@ class CustodyEditTransportRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label,
-              style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
           const SizedBox(height: 6),
           SegmentedButton<bool>(
             segments: [
@@ -373,51 +313,4 @@ class CustodyEditTransportRow extends StatelessWidget {
           ),
         ],
       );
-}
-
-/// Multi-select chip row for choosing which children a custody request covers.
-/// An empty [selected] set means "All children".
-class _ChildChips extends ConsumerWidget {
-  final Set<String> selected;
-  final ValueChanged<Set<String>> onChanged;
-  const _ChildChips({required this.selected, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final children = ref.watch(householdChildNamesProvider);
-    if (children.isEmpty) return const SizedBox.shrink();
-
-    final allSelected = selected.isEmpty || selected.length == children.length;
-    return InputDecorator(
-      decoration: const InputDecoration(
-        labelText: 'Children',
-        border: OutlineInputBorder(),
-        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      ),
-      child: Wrap(
-        spacing: 8,
-        children: [
-          FilterChip(
-            label: const Text('All'),
-            selected: allSelected,
-            onSelected: (_) => onChanged({}),
-          ),
-          ...children.map((c) => FilterChip(
-                label: Text(c.name),
-                selected: !allSelected && selected.contains(c.name),
-                onSelected: (on) {
-                  final next = Set<String>.from(selected);
-                  if (on) {
-                    next.add(c.name);
-                  } else {
-                    next.remove(c.name);
-                  }
-                  // If all individually selected, collapse back to "All"
-                  onChanged(next.length == children.length ? {} : next);
-                },
-              )),
-        ],
-      ),
-    );
-  }
 }

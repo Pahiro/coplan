@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/auth_provider.dart';
 import '../providers/household_provider.dart';
+import '../providers/invite_provider.dart';
 
 /// Post-registration wizard: create a new household or join an existing one
 /// via invite code.
@@ -15,7 +16,15 @@ class HouseholdSetupScreen extends ConsumerStatefulWidget {
 }
 
 class _HouseholdSetupScreenState extends ConsumerState<HouseholdSetupScreen> {
-  _SetupMode _mode = _SetupMode.choose;
+  late _SetupMode _mode;
+
+  @override
+  void initState() {
+    super.initState();
+    // If a pending invite code arrived via link, skip straight to the join panel.
+    final code = ref.read(pendingInviteProvider);
+    _mode = code != null ? _SetupMode.join : _SetupMode.choose;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -147,16 +156,12 @@ class _CreateHouseholdPanelState
       final auth = ref.read(authProvider).valueOrNull;
       final displayName = auth?.userName ?? 'Parent';
 
-      // Create household + children atomically (passing child names through, so
-      // they're created with the new household id rather than via addChild,
-      // which would no-op while the provider state is still null).
       await ref.read(householdProvider.notifier).createHousehold(
             name: _nameCtrl.text.trim(),
             displayName: displayName,
             childNames: _childCtrls.map((c) => c.text).toList(),
           );
 
-      // Refresh auth state so the app routes to the main shell
       if (mounted) {
         ref.invalidate(authProvider);
       }
@@ -269,9 +274,17 @@ class _JoinHouseholdPanel extends ConsumerStatefulWidget {
 }
 
 class _JoinHouseholdPanelState extends ConsumerState<_JoinHouseholdPanel> {
-  final _codeCtrl = TextEditingController();
+  late TextEditingController _codeCtrl;
   bool _saving = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // Pre-fill from pending invite (deep link / URL param).
+    final pending = ref.read(pendingInviteProvider);
+    _codeCtrl = TextEditingController(text: pending ?? '');
+  }
 
   @override
   void dispose() {
@@ -286,6 +299,7 @@ class _JoinHouseholdPanelState extends ConsumerState<_JoinHouseholdPanel> {
     setState(() { _saving = true; _error = null; });
     try {
       await ref.read(householdProvider.notifier).acceptInvite(code);
+      ref.read(pendingInviteProvider.notifier).state = null;
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {

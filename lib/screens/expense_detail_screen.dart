@@ -1,25 +1,47 @@
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../core/expense_categories.dart';
+import '../core/pb_client.dart';
 import '../models/expense_split.dart';
 import '../models/shared_expense.dart';
 import '../providers/auth_provider.dart';
 import '../providers/expense_provider.dart';
 import '../providers/household_provider.dart';
 import '../providers/payment_details_provider.dart';
+import '../widgets/common.dart';
 import 'expense_form_screen.dart';
 
+/// Detail view for one expense. Watches the expenses provider (rather than
+/// holding a snapshot) so edits made from the pencil icon show immediately.
 class ExpenseDetailScreen extends ConsumerWidget {
-  final SharedExpense expense;
-  const ExpenseDetailScreen({super.key, required this.expense});
+  final String expenseId;
+  const ExpenseDetailScreen({super.key, required this.expenseId});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final expensesAsync = ref.watch(expensesProvider);
+    final household     = ref.watch(householdProvider).valueOrNull;
+    final myId          = ref.watch(authProvider).valueOrNull?.userId ?? '';
+    final cs            = Theme.of(context).colorScheme;
+
+    final expense = expensesAsync.valueOrNull
+        ?.firstWhereOrNull((e) => e.id == expenseId);
+
+    if (expense == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Expense Details')),
+        body: expensesAsync.isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : const Center(
+                child: Text('This expense no longer exists.',
+                    style: TextStyle(color: Colors.grey))),
+      );
+    }
+
     final splitsAsync = ref.watch(expenseSplitsProvider(expense.id));
-    final household   = ref.watch(householdProvider).valueOrNull;
-    final myId        = ref.watch(authProvider).valueOrNull?.userId ?? '';
-    final cs          = Theme.of(context).colorScheme;
 
     String userName(String userId) {
       final member = household?.members
@@ -46,7 +68,7 @@ class ExpenseDetailScreen extends ConsumerWidget {
             IconButton(
               icon: const Icon(Icons.delete_outline),
               tooltip: 'Delete',
-              onPressed: () => _confirmDelete(context, ref),
+              onPressed: () => _confirmDelete(context, ref, expense),
             ),
         ],
       ),
@@ -70,7 +92,8 @@ class ExpenseDetailScreen extends ConsumerWidget {
                           )),
                   const SizedBox(height: 12),
                   _DetailRow(
-                      Icons.category, expense.category ?? 'Other'),
+                      ExpenseCategory.iconFor(expense.category),
+                      expense.category ?? 'Other'),
                   if (expense.childName != 'All')
                     _DetailRow(Icons.child_care, expense.childName),
                   if (expense.isRecurring)
@@ -85,6 +108,9 @@ class ExpenseDetailScreen extends ConsumerWidget {
               ),
             ),
           ),
+
+          // Receipt photo
+          if (expense.receipt != null) _ReceiptCard(expense: expense),
 
           const SizedBox(height: 16),
           Text('Splits',
@@ -175,28 +201,70 @@ class ExpenseDetailScreen extends ConsumerWidget {
     );
   }
 
-  void _confirmDelete(BuildContext context, WidgetRef ref) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete Expense'),
-        content: Text('Delete "${expense.title}" and all its splits?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
+  Future<void> _confirmDelete(
+      BuildContext context, WidgetRef ref, SharedExpense expense) async {
+    final ok = await confirmDialog(
+      context,
+      title: 'Delete Expense',
+      body: 'Delete "${expense.title}" and all its splits?',
+      action: 'Delete',
+      destructive: true,
+    );
+    if (ok && context.mounted) {
+      await ref.read(expensesProvider.notifier).deleteExpense(expense.id);
+      if (context.mounted) Navigator.pop(context);
+    }
+  }
+}
+
+// ── Receipt photo card ───────────────────────────────────────────────────────
+
+class _ReceiptCard extends StatelessWidget {
+  final SharedExpense expense;
+  const _ReceiptCard({required this.expense});
+
+  String get _url =>
+      '${pb.baseURL}/api/files/shared_expenses/${expense.id}/${expense.receipt}';
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => showDialog<void>(
+            context: context,
+            builder: (_) => Dialog(
+              child: InteractiveViewer(
+                child: Image.network(_url, fit: BoxFit.contain),
+              ),
+            ),
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(ctx).colorScheme.error),
-            onPressed: () {
-              Navigator.pop(ctx);
-              ref.read(expensesProvider.notifier).deleteExpense(expense.id);
-              Navigator.pop(context);
-            },
-            child: const Text('Delete'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Image.network(
+                '$_url?thumb=600x0',
+                height: 160,
+                width: double.infinity,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
+              const Padding(
+                padding: EdgeInsets.all(10),
+                child: Row(
+                  children: [
+                    Icon(Icons.receipt_long, size: 16, color: Colors.grey),
+                    SizedBox(width: 6),
+                    Text('Receipt — tap to view',
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
