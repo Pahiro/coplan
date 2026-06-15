@@ -1,9 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:pocketbase/pocketbase.dart';
 
 import '../core/pb_client.dart';
 import '../utils/dates.dart';
 import '../models/absence_period.dart';
+import '../services/offline_cache.dart';
 import '../services/widget_cache_service.dart';
 import 'household_provider.dart';
 import 'schedule_provider.dart';
@@ -17,19 +17,12 @@ class AbsencePeriodsNotifier extends AsyncNotifier<List<AbsencePeriod>> {
   @override
   Future<List<AbsencePeriod>> build() => _fetch();
 
-  Future<List<AbsencePeriod>> _fetch() async {
-    try {
-      final records = await pb
-          .collection('absence_periods')
-          .getFullList(sort: 'start_date');
-      return records
-          .map((r) => AbsencePeriod.fromRecord(r.toJson()))
-          .toList();
-    } on ClientException catch (e) {
-      if (e.statusCode == 404) return [];
-      rethrow;
-    }
-  }
+  Future<List<AbsencePeriod>> _fetch() => fetchCachedList(
+        collection: 'absence_periods',
+        fetch: () =>
+            pb.collection('absence_periods').getFullList(sort: 'start_date'),
+        parse: AbsencePeriod.fromRecord,
+      );
 
   Future<void> create({
     required String absentParent,

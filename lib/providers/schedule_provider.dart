@@ -1,5 +1,4 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:pocketbase/pocketbase.dart';
 
 import '../core/pb_client.dart';
 import '../engine/engine_factory.dart';
@@ -9,6 +8,7 @@ import '../models/manual_override.dart';
 import '../models/recurring_arrangement.dart';
 import '../models/resolved_event.dart';
 import '../models/weekday_rule.dart';
+import '../services/offline_cache.dart';
 import '../utils/dates.dart';
 import 'absence_provider.dart';
 import 'holiday_provider.dart';
@@ -17,61 +17,67 @@ import 'household_provider.dart';
 // ── Static data — fetched once, rarely changes ───────────────────────────────
 
 final baseRulesProvider = FutureProvider<List<BaseRule>>((ref) async {
-  final records = await pb.collection('rules_base').getFullList();
-  return records.map((r) => BaseRule.fromRecord(r.toJson())).toList();
+  return fetchCachedList(
+    collection: 'rules_base',
+    fetch: () => pb.collection('rules_base').getFullList(),
+    parse: BaseRule.fromRecord,
+  );
 });
 
 final weekdayRulesProvider = FutureProvider<List<WeekdayRule>>((ref) async {
-  try {
-    final records = await pb
-        .collection('custody_weekday_rules')
-        .getFullList(filter: 'active = true');
-    return records.map((r) => WeekdayRule.fromRecord(r.toJson())).toList();
-  } on ClientException catch (e) {
-    // Collection doesn't exist yet (migration pending) — treat as no rules.
-    if (e.statusCode == 404) return [];
-    rethrow;
-  }
+  return fetchCachedList(
+    collection: 'custody_weekday_rules',
+    fetch: () =>
+        pb.collection('custody_weekday_rules').getFullList(filter: 'active = true'),
+    parse: WeekdayRule.fromRecord,
+  );
 });
 
 final recurringArrangementsProvider =
     FutureProvider<List<RecurringArrangement>>((ref) async {
-  try {
-    final records = await pb
-        .collection('custody_recurring')
-        .getFullList(filter: 'active = true');
-    return records
-        .map((r) => RecurringArrangement.fromRecord(r.toJson()))
-        .toList();
-  } on ClientException catch (e) {
-    // Collection doesn't exist yet (migration pending) — treat as none.
-    if (e.statusCode == 404) return [];
-    rethrow;
-  }
+  return fetchCachedList(
+    collection: 'custody_recurring',
+    fetch: () =>
+        pb.collection('custody_recurring').getFullList(filter: 'active = true'),
+    parse: RecurringArrangement.fromRecord,
+  );
+});
+
+/// All manual overrides for the household (the engine filters by date itself).
+/// Fetched as a full list rather than per-day so cached data covers any date
+/// while the server is unreachable.
+final manualOverridesProvider = FutureProvider<List<ManualOverride>>((ref) async {
+  return fetchCachedList(
+    collection: 'manual_overrides',
+    fetch: () => pb.collection('manual_overrides').getFullList(),
+    parse: ManualOverride.fromRecord,
+  );
+});
+
+/// All accepted custody requests in the household (engine filters by date and
+/// re-checks acceptance). Distinct from `custodyRequestsProvider`, which is
+/// scoped to the current user's own requests for the requests screen.
+final acceptedCustodyProvider = FutureProvider<List<CustodyRequest>>((ref) async {
+  return fetchCachedList(
+    collection: 'custody_requests_accepted',
+    fetch: () => pb
+        .collection('custody_requests')
+        .getFullList(filter: 'status = "accepted"'),
+    parse: CustodyRequest.fromRecord,
+  );
 });
 
 // ── Resolved schedule for a single day ──────────────────────────────────────
 
 final resolvedDayProvider =
     FutureProvider.family<List<ResolvedEvent>, DateTime>((ref, rawDate) async {
-  final date    = DateTime(rawDate.year, rawDate.month, rawDate.day);
-  final dateStr = isoDate(date);
+  final date = DateTime(rawDate.year, rawDate.month, rawDate.day);
 
-  final rules        = await ref.watch(baseRulesProvider.future);
-  final weekdayRules = await ref.watch(weekdayRulesProvider.future);
-  final recurring    = await ref.watch(recurringArrangementsProvider.future);
-
-  final overrideRecords = await pb
-      .collection('manual_overrides')
-      .getFullList(filter: 'target_date = "$dateStr"');
-  final overrides =
-      overrideRecords.map((r) => ManualOverride.fromRecord(r.toJson())).toList();
-
-  final custodyRecords = await pb
-      .collection('custody_requests')
-      .getFullList(filter: 'date = "$dateStr" && status = "accepted"');
-  final custodyRequests =
-      custodyRecords.map((r) => CustodyRequest.fromRecord(r.toJson())).toList();
+  final rules           = await ref.watch(baseRulesProvider.future);
+  final weekdayRules    = await ref.watch(weekdayRulesProvider.future);
+  final recurring       = await ref.watch(recurringArrangementsProvider.future);
+  final overrides       = await ref.watch(manualOverridesProvider.future);
+  final custodyRequests = await ref.watch(acceptedCustodyProvider.future);
 
   final allAbsences = await ref.watch(absencePeriodsProvider.future);
   final allHolidays = await ref.watch(holidayBlocksProvider.future);
@@ -135,19 +141,8 @@ final weekEventsProvider =
   final weekdayRules = await ref.watch(weekdayRulesProvider.future);
   final recurring    = await ref.watch(recurringArrangementsProvider.future);
 
-  final weekEnd = monday.add(const Duration(days: 6));
-
-  final overrideRecords = await pb.collection('manual_overrides').getFullList(
-      filter:
-          'target_date >= "${isoDate(monday)}" && target_date <= "${isoDate(weekEnd)}"');
-  final allOverrides =
-      overrideRecords.map((r) => ManualOverride.fromRecord(r.toJson())).toList();
-
-  final custodyRecords = await pb.collection('custody_requests').getFullList(
-      filter:
-          'date >= "${isoDate(monday)}" && date <= "${isoDate(weekEnd)}" && status = "accepted"');
-  final allCustody =
-      custodyRecords.map((r) => CustodyRequest.fromRecord(r.toJson())).toList();
+  final allOverrides = await ref.watch(manualOverridesProvider.future);
+  final allCustody   = await ref.watch(acceptedCustodyProvider.future);
 
   final allAbsences = await ref.watch(absencePeriodsProvider.future);
   final allHolidays = await ref.watch(holidayBlocksProvider.future);
@@ -286,6 +281,7 @@ class ManualOverridesNotifier extends AsyncNotifier<void> {
   }
 
   void _invalidate() {
+    ref.invalidate(manualOverridesProvider);
     ref.invalidate(dashboardProvider);
     ref.invalidate(weekEventsProvider);
     ref.invalidate(resolvedDayProvider);

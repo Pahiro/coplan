@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/constants.dart';
 import '../core/pb_client.dart';
 import '../models/custody_request.dart';
+import '../services/offline_cache.dart';
 import '../services/queue_service.dart';
 import '../services/widget_cache_service.dart';
 import 'auth_provider.dart';
@@ -35,15 +36,16 @@ class CustodyRequestsNotifier
   @override
   Future<List<CustodyRequest>> build() => _fetch();
 
-  Future<List<CustodyRequest>> _fetch() async {
+  Future<List<CustodyRequest>> _fetch() {
     final userId = pb.authStore.record?.id ?? '';
-    final records = await pb.collection('custody_requests').getFullList(
-      filter: 'created_by = "$userId" || requested_from = "$userId"',
-      sort:   '-date',
+    return fetchCachedList(
+      collection: 'custody_requests_mine',
+      fetch: () => pb.collection('custody_requests').getFullList(
+            filter: 'created_by = "$userId" || requested_from = "$userId"',
+            sort: '-date',
+          ),
+      parse: CustodyRequest.fromRecord,
     );
-    return records
-        .map((r) => CustodyRequest.fromRecord(r.toJson()))
-        .toList();
   }
 
   // ── Write: custody request ─────────────────────────────────────────────────
@@ -127,6 +129,7 @@ class CustodyRequestsNotifier
       return;
     }
     ref.invalidateSelf();
+    ref.invalidate(acceptedCustodyProvider);
     ref.invalidate(dashboardProvider);
 
     // Recurring is parent-only; helper pickups are always one-off.
@@ -181,12 +184,14 @@ class CustodyRequestsNotifier
       return;
     }
     ref.invalidateSelf();
+    ref.invalidate(acceptedCustodyProvider);
     ref.invalidate(dashboardProvider);
   }
 
   Future<void> deleteRequest(String id) async {
     await pb.collection('custody_requests').delete(id);
     ref.invalidateSelf();
+    ref.invalidate(acceptedCustodyProvider);
     ref.invalidate(dashboardProvider);
   }
 
@@ -220,6 +225,7 @@ class CustodyRequestsNotifier
       return;
     }
     ref.invalidateSelf();
+    ref.invalidate(acceptedCustodyProvider);
     ref.invalidate(dashboardProvider);
   }
 
@@ -241,6 +247,7 @@ class CustodyRequestsNotifier
       return;
     }
     ref.invalidateSelf();
+    ref.invalidate(acceptedCustodyProvider);
   }
 
   // ── Write: shared one-off event ────────────────────────────────────────────
@@ -292,6 +299,7 @@ class CustodyRequestsNotifier
       _updateCount();
       return;
     }
+    ref.invalidate(manualOverridesProvider);
     ref.invalidate(dashboardProvider);
     ref.invalidate(weekEventsProvider);
     ref.invalidate(resolvedDayProvider);

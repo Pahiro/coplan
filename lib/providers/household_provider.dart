@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/pb_client.dart';
 import '../models/household.dart';
 import '../models/rotation_scheme.dart';
+import '../services/offline_cache.dart';
+import '../services/queue_service.dart' show isNetworkError;
 import 'auth_provider.dart';
 
 /// Provides the current user's active [HouseholdConfig] — members, children,
@@ -28,8 +30,16 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
     try {
       final user = await pb.collection('users').getOne(userId);
       householdId = user.data['active_household'] as String?;
-    } catch (_) {
-      return null;
+      if (householdId != null && householdId.isNotEmpty) {
+        await OfflineCache.writeString('active_household', householdId);
+      }
+    } catch (e) {
+      // Server unreachable — fall back to the last known active household so
+      // the rest of the resolution chain can serve from its own cache.
+      if (isNetworkError(e)) {
+        householdId = OfflineCache.readString('active_household');
+      }
+      if (householdId == null || householdId.isEmpty) return null;
     }
 
     if (householdId == null || householdId.isEmpty) return null;
@@ -38,29 +48,50 @@ class HouseholdNotifier extends AsyncNotifier<HouseholdConfig?> {
   }
 
   Future<HouseholdConfig?> _fetchHousehold(String householdId) async {
-    // Fetch household record
-    final hRecord = await pb.collection('households').getOne(householdId);
+    try {
+      final hRecord = await pb.collection('households').getOne(householdId);
+      final memberRecords = await pb.collection('household_members').getFullList(
+        filter: 'household = "$householdId"',
+      );
+      final childRecords = await pb.collection('children').getFullList(
+        filter: 'household = "$householdId"',
+      );
 
-    // Fetch members
-    final memberRecords = await pb.collection('household_members').getFullList(
-      filter: 'household = "$householdId"',
-    );
-    final members = memberRecords
-        .map((r) => HouseholdMember.fromRecord(r.toJson()))
-        .toList();
+      final hJson = hRecord.toJson();
+      final mJson = memberRecords.map((r) => r.toJson()).toList();
+      final cJson = childRecords.map((r) => r.toJson()).toList();
 
-    // Fetch children
-    final childRecords = await pb.collection('children').getFullList(
-      filter: 'household = "$householdId"',
-    );
-    final children = childRecords
-        .map((r) => HouseholdChild.fromRecord(r.toJson()))
-        .toList();
+      // Cache the raw records so the engine can rebuild the household config
+      // (rotation anchor, parent names, children) while the server is down.
+      await OfflineCache.writeMap('household_record', hJson);
+      await OfflineCache.writeList('household_members', mJson);
+      await OfflineCache.writeList('household_children', cJson);
 
+      return HouseholdConfig.fromRecord(
+        hJson,
+        members: mJson.map(HouseholdMember.fromRecord).toList(),
+        children: cJson.map(HouseholdChild.fromRecord).toList(),
+      );
+    } catch (e) {
+      if (isNetworkError(e)) {
+        final cached = _cachedHousehold();
+        if (cached != null) return cached;
+      }
+      rethrow;
+    }
+  }
+
+  /// Rebuilds the household config from cached raw records, or null if nothing
+  /// has been cached yet (e.g. first launch was offline).
+  HouseholdConfig? _cachedHousehold() {
+    final hJson = OfflineCache.readMap('household_record');
+    if (hJson == null) return null;
+    final mJson = OfflineCache.readList('household_members') ?? const [];
+    final cJson = OfflineCache.readList('household_children') ?? const [];
     return HouseholdConfig.fromRecord(
-      hRecord.toJson(),
-      members: members,
-      children: children,
+      hJson,
+      members: mJson.map(HouseholdMember.fromRecord).toList(),
+      children: cJson.map(HouseholdChild.fromRecord).toList(),
     );
   }
 

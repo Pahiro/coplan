@@ -11,6 +11,7 @@ import 'core/pb_client.dart';
 import 'providers/invite_provider.dart';
 import 'providers/queue_count_provider.dart';
 import 'services/notification_service.dart';
+import 'services/offline_cache.dart';
 import 'services/queue_service.dart';
 
 void main() async {
@@ -18,6 +19,7 @@ void main() async {
 
   final prefs = await SharedPreferences.getInstance();
   await initPocketBase(prefs);
+  await OfflineCache.init();
   await NotificationService.init();
   final initialQueueCount = await QueueService.pendingCount();
 

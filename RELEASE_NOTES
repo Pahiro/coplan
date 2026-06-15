@@ -1,5 +1,4 @@
-CoPlan 3.1 — a smoother, more modern feel.
-• Screens now glide instead of snap: animated page transitions, smooth tab switching, and expenses that expand from their card into the detail view.
-• The calendar slides in the direction you navigate, and the day panel cross-fades when you pick a different day.
-• Schedule cards cascade in gently, loading screens show content-shaped placeholders instead of a spinner, and your net balance counts up to its value.
-• Bottom sheets gained drag handles. All motion is quick (under a third of a second) and respects your phone's reduce-motion setting.
+CoPlan — your schedule now works offline.
+• If the server can't be reached, the app now shows the last data it synced instead of an error on your events.
+• Your rotation, custody changes, one-off overrides, holidays and absences are all cached on your phone and used automatically while you're offline.
+• Everything refreshes back to the latest as soon as the connection returns.

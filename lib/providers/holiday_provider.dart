@@ -1,9 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:pocketbase/pocketbase.dart';
 
 import '../core/pb_client.dart';
 import '../utils/dates.dart';
 import '../models/holiday_block.dart';
+import '../services/offline_cache.dart';
 import '../services/widget_cache_service.dart';
 import 'household_provider.dart';
 import 'schedule_provider.dart';
@@ -17,19 +17,12 @@ class HolidayBlocksNotifier extends AsyncNotifier<List<HolidayBlock>> {
   @override
   Future<List<HolidayBlock>> build() => _fetch();
 
-  Future<List<HolidayBlock>> _fetch() async {
-    try {
-      final records = await pb
-          .collection('holiday_blocks')
-          .getFullList(sort: 'start_date');
-      return records
-          .map((r) => HolidayBlock.fromRecord(r.toJson()))
-          .toList();
-    } on ClientException catch (e) {
-      if (e.statusCode == 404) return [];
-      rethrow;
-    }
-  }
+  Future<List<HolidayBlock>> _fetch() => fetchCachedList(
+        collection: 'holiday_blocks',
+        fetch: () =>
+            pb.collection('holiday_blocks').getFullList(sort: 'start_date'),
+        parse: HolidayBlock.fromRecord,
+      );
 
   Future<void> create({
     required String name,
