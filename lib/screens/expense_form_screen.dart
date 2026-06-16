@@ -25,6 +25,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
   final _titleCtrl = TextEditingController();
   final _descCtrl  = TextEditingController();
   final _amountCtrl = TextEditingController();
+  final _beneficiaryCtrl = TextEditingController();
 
   String _category = 'other';
   String _childName = 'All';
@@ -45,6 +46,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
       _titleCtrl.text  = e.title;
       _descCtrl.text   = e.description ?? '';
       _amountCtrl.text = e.amountInRands.toStringAsFixed(2);
+      _beneficiaryCtrl.text = e.beneficiary ?? '';
       _category    = e.category ?? 'other';
       _childName   = e.childName;
       _isRecurring = e.isRecurring;
@@ -58,6 +60,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
     _titleCtrl.dispose();
     _descCtrl.dispose();
     _amountCtrl.dispose();
+    _beneficiaryCtrl.dispose();
     super.dispose();
   }
 
@@ -155,6 +158,18 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
                 hintText: 'Optional details',
               ),
               maxLines: 2,
+            ),
+            const SizedBox(height: 12),
+
+            // Beneficiary — free-text payee for this expense
+            TextFormField(
+              controller: _beneficiaryCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Pay to',
+                hintText: 'e.g. Sunshine Holiday Care, acc 1234…',
+              ),
+              maxLines: 2,
+              minLines: 1,
             ),
             const SizedBox(height: 12),
 
@@ -292,6 +307,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
               amount: amountCents,
               childName: _childName,
               category: _category,
+              beneficiary: _beneficiaryCtrl.text.trim(),
               isRecurring: _isRecurring,
               recurrence: _isRecurring ? _recurrence : null,
               dueDay: _isRecurring ? _dueDay : null,
@@ -305,6 +321,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
               amount: amountCents,
               childName: _childName,
               category: _category,
+              beneficiary: _beneficiaryCtrl.text.trim(),
               isRecurring: _isRecurring,
               recurrence: _isRecurring ? _recurrence : null,
               dueDay: _isRecurring ? _dueDay : null,

@@ -19,6 +19,7 @@ class SharedExpense {
   final DateTime? startDate;
   final DateTime? endDate;
   final String? paidBy;       // user id of parent who pays the vendor
+  final String? beneficiary;  // free-text payee for this expense (e.g. vendor)
   final bool active;
   final String createdBy;
   final String? receipt;      // uploaded receipt file name (PocketBase file field)
@@ -41,6 +42,7 @@ class SharedExpense {
     this.startDate,
     this.endDate,
     this.paidBy,
+    this.beneficiary,
     this.active = true,
     required this.createdBy,
     this.receipt,
@@ -70,6 +72,7 @@ class SharedExpense {
         startDate:   _parseDate(j['start_date'] as String?),
         endDate:     _parseDate(j['end_date'] as String?),
         paidBy:      _nonEmpty(j['paid_by'] as String?),
+        beneficiary: _nonEmpty(j['beneficiary'] as String?),
         active:      (j['active'] as bool?) ?? true,
         createdBy:   j['created_by'] as String? ?? '',
         receipt:     _nonEmpty(j['receipt'] as String?),

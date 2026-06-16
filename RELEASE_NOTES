@@ -1,4 +1,3 @@
-CoPlan — your schedule now works offline.
-• If the server can't be reached, the app now shows the last data it synced instead of an error on your events.
-• Your rotation, custody changes, one-off overrides, holidays and absences are all cached on your phone and used automatically while you're offline.
-• Everything refreshes back to the latest as soon as the connection returns.
+CoPlan — record who each expense gets paid to.
+• New Pay to field on expenses: note the beneficiary for a cost (a holiday-care provider, a sports club, an account number) so it is clear where the money goes.
+• Tidied up Settings — the old per-person banking profile is gone; payment details now live on the expense itself, where you actually need them.

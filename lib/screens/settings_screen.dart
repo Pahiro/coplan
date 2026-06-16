@@ -10,7 +10,6 @@ import 'settings/appearance_settings_screen.dart';
 import 'settings/custody_settings_screen.dart';
 import 'settings/household_settings_screen.dart';
 import 'settings/notifications_settings_screen.dart';
-import 'settings/payment_details_settings_screen.dart';
 import 'settings/schedule_settings_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -77,14 +76,6 @@ class SettingsScreen extends ConsumerWidget {
                   subtitle: const Text('Holiday periods and absences'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => push(const CustodySettingsScreen()),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.account_balance_wallet_outlined),
-                  title: const Text('Payment Details'),
-                  subtitle: const Text('Banking info and payment links'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => push(const PaymentDetailsSettingsScreen()),
                 ),
                 const Divider(height: 1),
                 ListTile(
