@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/household_provider.dart';
+import '../utils/dates.dart';
 
 /// Shared form fields used by the event / request bottom sheets.
 /// Previously each sheet carried its own private copies of these.
@@ -41,6 +42,72 @@ class PickerField extends StatelessWidget {
           child: Text(label, style: Theme.of(context).textTheme.bodyLarge),
         ),
       );
+}
+
+/// Optional, clearable "repeats until" end-date picker used by the recurring
+/// event / custody / expense editors. A null [value] means "repeats forever".
+///
+/// Tapping opens a date picker; the trailing clear button (shown only when a
+/// date is set) resets it back to null.
+class EndDateField extends StatelessWidget {
+  final DateTime? value;
+  final ValueChanged<DateTime?> onChanged;
+
+  /// Earliest selectable date (e.g. the start date / today).
+  final DateTime? firstDate;
+  final String label;
+
+  const EndDateField({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.firstDate,
+    this.label = 'End date (optional)',
+  });
+
+  Future<void> _pick(BuildContext context) async {
+    final first = firstDate ?? DateTime.now();
+    final initial = value != null && !value!.isBefore(first) ? value! : first;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: first,
+      lastDate: DateTime.now().add(const Duration(days: 365 * 5)),
+    );
+    if (picked != null) onChanged(picked);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final set = value != null;
+    return InkWell(
+      onTap: () => _pick(context),
+      borderRadius: BorderRadius.circular(4),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          prefixIcon: const Icon(Icons.event_busy_outlined),
+          border: const OutlineInputBorder(),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          suffixIcon: set
+              ? IconButton(
+                  icon: const Icon(Icons.clear),
+                  tooltip: 'Remove end date',
+                  onPressed: () => onChanged(null),
+                )
+              : null,
+        ),
+        child: Text(
+          set ? 'Ends: ${fmtDateLong(value!)}' : label,
+          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: set
+                    ? null
+                    : Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+        ),
+      ),
+    );
+  }
 }
 
 /// (isoWeekday, display name) pairs, Monday first.

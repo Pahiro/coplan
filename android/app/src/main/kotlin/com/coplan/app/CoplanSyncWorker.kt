@@ -238,6 +238,7 @@ class CoplanSyncWorker(
         for (j in 0 until weekdayRules.length()) {
             val wr = weekdayRules.getJSONObject(j)
             if (wr.optInt("day_of_week") == dow) {
+                if (pastEndDate(wr, date)) continue // rule has lapsed → rotation
                 val p = wr.optString("assigned_parent")
                 if (p.isNotEmpty()) return p
             }
@@ -273,6 +274,7 @@ class CoplanSyncWorker(
             if (a.optInt("day_of_week") != dow) continue
             val start = parseDate(a.optString("start_date")) ?: continue
             if (date.isBefore(start)) continue
+            if (pastEndDate(a, date)) continue // arrangement has lapsed
             val toParent = a.optString("to_parent").takeIf { it.isNotEmpty() } ?: continue
             if (base == toParent) continue   // recipient already owns the day
             if (isAbsent(toParent, date, dayAbsences)) continue  // absent — can't take kids
@@ -385,6 +387,7 @@ class CoplanSyncWorker(
         for (i in 0 until rules.length()) {
             val rule = rules.getJSONObject(i)
             if (rule.optInt("day_of_week") != dow) continue
+            if (pastEndDate(rule, date)) continue // standing event has lapsed
 
             val childName = rule.optString("child_name", "All")
             val time      = rule.optString("event_time", "08:00")
@@ -611,6 +614,13 @@ class CoplanSyncWorker(
     private fun parseDate(s: String?): LocalDate? =
         try { if (s.isNullOrEmpty()) null else LocalDate.parse(s.substring(0, 10)) }
         catch (_: Exception) { null }
+
+    /** True when [rec] carries an end_date and [date] is past it (inclusive end).
+     *  Mirrors the Dart engine's optional repeat end-date. */
+    private fun pastEndDate(rec: JSONObject, date: LocalDate): Boolean {
+        val end = parseDate(rec.optString("end_date")) ?: return false
+        return date.isAfter(end)
+    }
 
     private fun parseHex(s: String?): Long? {
         if (s == null || !s.startsWith("#") || s.length != 7) return null

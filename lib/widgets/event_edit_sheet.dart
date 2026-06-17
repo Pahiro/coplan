@@ -26,6 +26,7 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
   late String   _child;
   late TimeOfDay _time;
   TimeOfDay?    _endTime;
+  DateTime?     _endDate;   // only for standing rules (optional "repeats until")
   late bool     _isShared;
   late DateTime _date;      // only for adhoc/create-rule (date picker)
   late int      _dayOfWeek; // only for base rules (day picker)
@@ -48,6 +49,17 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
     _isShared     = e?.isShared ?? false;
     _date         = e?.date ?? DateTime.now().add(const Duration(days: 1));
     _dayOfWeek    = e?.date.weekday ?? DateTime.monday;
+    // Pre-populate the standing rule's existing end date (ResolvedEvent doesn't
+    // carry it, so look it up from the loaded base rules).
+    final rid = e?.ruleId;
+    if (rid != null && e?.overrideId == null) {
+      for (final r in ref.read(baseRulesProvider).valueOrNull ?? const []) {
+        if (r.id == rid) {
+          _endDate = r.endDate;
+          break;
+        }
+      }
+    }
   }
 
   @override
@@ -106,6 +118,7 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
               activity:    _activityCtrl.text.trim(),
               location:    _locationCtrl.text.trim(),
               isShared:    _isShared,
+              endDate:     _endDate != null ? isoDate(_endDate!) : null,
             );
       } else {
         // Create new standing rule
@@ -116,6 +129,7 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
               activity:    _activityCtrl.text.trim(),
               location:    _locationCtrl.text.trim(),
               isShared:    _isShared,
+              endDate:     _endDate != null ? isoDate(_endDate!) : null,
             );
       }
       if (mounted) Navigator.pop(context);
@@ -225,6 +239,16 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
                   prefixIcon: Icon(Icons.notes_outlined),
                   border: OutlineInputBorder(),
                 ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            // Optional end date — standing rules only
+            if (!_isEditOverride) ...[
+              EndDateField(
+                value: _endDate,
+                label: 'Repeats forever (set an end date)',
+                onChanged: (d) => setState(() => _endDate = d),
               ),
               const SizedBox(height: 12),
             ],

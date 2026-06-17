@@ -56,14 +56,18 @@ AbsencePeriod absence({
     );
 
 BaseRule rule(int dow, String time,
-        {String child = 'All', String activity = 'Event', String id = 'r'}) =>
+        {String child = 'All',
+        String activity = 'Event',
+        String id = 'r',
+        DateTime? endDate}) =>
     BaseRule(
         id: id,
         childName: child,
         dayOfWeek: dow,
         eventTime: time,
         location: '',
-        activity: activity);
+        activity: activity,
+        endDate: endDate);
 
 CustodyRequest custodyReq({
   required DateTime date,
@@ -96,6 +100,7 @@ RecurringArrangement recurring({
   String pickup = '17:30',
   String child = 'All',
   required DateTime start,
+  DateTime? endDate,
   String id = 'arr',
 }) =>
     RecurringArrangement(
@@ -105,6 +110,7 @@ RecurringArrangement recurring({
       childName: child,
       pickupTime: pickup,
       startDate: start,
+      endDate: endDate,
     );
 
 ManualOverride override({
@@ -444,6 +450,56 @@ void main() {
       );
       expect(e.absenceFor(aliceDay)?.absentParent, 'Alice');
       expect(e.absenceFor(aliceDay.add(const Duration(days: 3))), isNull);
+    });
+  });
+
+  group('end dates (inclusive)', () {
+    final target = daysFromToday(21); // future date on its own weekday
+    final wd = target.weekday;
+    final start = DateTime(2025, 1, 1);
+
+    test('standing event still renders on its end date, gone the next week', () {
+      final e = engine(anchor: target, baseRules: [
+        rule(wd, '16:00', activity: 'Swimming', id: 'rs', endDate: target),
+      ]);
+      // On the end date the event is present…
+      expect(
+        e.resolveDay(target).where((x) => x.ruleId == 'rs'), isNotEmpty);
+      // …but the same weekday a week later is past the end date.
+      final nextWeek = target.add(const Duration(days: 7));
+      expect(
+        e.resolveDay(nextWeek).where((x) => x.ruleId == 'rs'), isEmpty);
+    });
+
+    test('standing event without an end date repeats forever', () {
+      final e = engine(anchor: target, baseRules: [
+        rule(wd, '16:00', id: 'rs'),
+      ]);
+      final nextWeek = target.add(const Duration(days: 7));
+      expect(e.resolveDay(nextWeek).where((x) => x.ruleId == 'rs'), isNotEmpty);
+    });
+
+    test('recurring arrangement fires on its end date, stops after', () {
+      final e = engine(anchor: target, recurring: [
+        recurring(dow: wd, to: 'Bob', start: start, endDate: target),
+      ]);
+      expect(e.dayTransferFor(target), isNotNull); // inclusive on end date
+      final nextWeek = target.add(const Duration(days: 7));
+      expect(e.effectiveCustodyFor(nextWeek), isEmpty); // past end date
+    });
+
+    test('weekday rule applies on its end date, falls back to rotation after', () {
+      // anchor == target → daysSince 0 → even parent (Alice) owns the day by
+      // rotation; a weekday rule assigns Bob until `target` (inclusive).
+      final ruleEnd = WeekdayRule(
+          id: 'w', dayOfWeek: wd, assignedParent: 'Bob', endDate: target);
+      final e = engine(anchor: target, weekdayRules: [ruleEnd]);
+      expect(e.dayOwner(target), 'Bob'); // rule wins on the end date
+      // Two weeks on is another even (Alice) rotation week; the rule has lapsed
+      // so the day reverts to the rotation owner rather than the rule's Bob.
+      final later = target.add(const Duration(days: 14));
+      expect(e.weekOwner(later), 'Alice');
+      expect(e.dayOwner(later), 'Alice');
     });
   });
 }

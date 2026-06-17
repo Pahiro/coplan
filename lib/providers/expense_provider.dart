@@ -214,6 +214,7 @@ class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
     String? recurrence,
     int? dueDay,
     DateTime? nextDueDate,
+    DateTime? endDate,
     http.MultipartFile? receipt,
   }) async {
     // Get old amount to check if splits need recalculating
@@ -233,6 +234,7 @@ class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
         'recurrence':   recurrence ?? '',
         'due_day':      dueDay,
         'next_due_date': nextDueDate != null ? isoDate(nextDueDate) : '',
+        'end_date':     endDate != null ? isoDate(endDate) : '',
       },
       files: receipt != null ? [receipt] : const [],
     );

@@ -560,13 +560,17 @@ class _RecurringRulesSection extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('${rule.assignedParent} has the kids'),
+                    if (rule.endDate != null)
+                      Text('Until ${fmtDateLong(rule.endDate!)}',
+                          style: const TextStyle(
+                              fontSize: 11, color: Colors.grey)),
                     if (rule.reason.isNotEmpty)
                       Text(rule.reason,
                           style: const TextStyle(
                               fontSize: 11, color: Colors.grey)),
                   ],
                 ),
-                isThreeLine: rule.reason.isNotEmpty,
+                isThreeLine: rule.reason.isNotEmpty || rule.endDate != null,
                 trailing: IconButton(
                   icon: const Icon(Icons.delete_outline, color: Colors.red),
                   tooltip: 'Remove standing rule',

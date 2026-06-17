@@ -36,6 +36,7 @@ class _CustodyRequestEditSheetState
   late bool      _toParentCollects;
   late bool      _toParentReturns;
   late bool      _repeatWeekly;
+  DateTime?      _repeatEndDate; // optional "repeats until" for the standing rule
   final _noteCtrl = TextEditingController();
   bool _saving = false;
 
@@ -57,9 +58,11 @@ class _CustodyRequestEditSheetState
     final rules        = ref.read(weekdayRulesProvider).valueOrNull ?? <WeekdayRule>[];
     final arrangements = ref.read(recurringArrangementsProvider).valueOrNull
         ?? <RecurringArrangement>[];
-    _repeatWeekly = arrangements.any((a) =>
-            a.active && a.dayOfWeek == r.date.weekday && a.toParent == r.toParent) ||
+    final existingArr = arrangements.firstWhereOrNull((a) =>
+        a.active && a.dayOfWeek == r.date.weekday && a.toParent == r.toParent);
+    _repeatWeekly = existingArr != null ||
         rules.any((wr) => wr.active && wr.dayOfWeek == r.date.weekday);
+    _repeatEndDate = existingArr?.endDate;
   }
 
   @override
@@ -129,6 +132,7 @@ class _CustodyRequestEditSheetState
             toParentCollects: _toParentCollects,
             toParentReturns:  false,
             startDate:        isoDate(_date),
+            endDate:          _repeatEndDate != null ? isoDate(_repeatEndDate!) : null,
             note:             _noteCtrl.text.isEmpty ? null : _noteCtrl.text,
           );
         } else {
@@ -238,6 +242,15 @@ class _CustodyRequestEditSheetState
                     : 'One-time request only'),
                 contentPadding: EdgeInsets.zero,
               ),
+              if (_repeatWeekly) ...[
+                const SizedBox(height: 8),
+                EndDateField(
+                  value: _repeatEndDate,
+                  firstDate: _date,
+                  label: 'Repeats forever (set an end date)',
+                  onChanged: (d) => setState(() => _repeatEndDate = d),
+                ),
+              ],
             ],
 
             if (_hasReturnTime) ...[

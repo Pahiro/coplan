@@ -89,7 +89,7 @@ class ResolutionEngine {
   /// when a transfer pickup falls mid-day.
   String baseOwner(DateTime date) {
     if (isSharedMode) return 'Both';
-    return _weekdayRuleParent(date.weekday) ?? holidayOwner(date) ?? weekOwner(date);
+    return _weekdayRuleParent(date) ?? holidayOwner(date) ?? weekOwner(date);
   }
 
   /// Returns the rotation parent for [date] based on the configured scheme.
@@ -115,7 +115,7 @@ class ResolutionEngine {
     final transfer = dayTransferFor(date);
     if (transfer != null) return transfer.toParent;
     if (isSharedMode) return 'Both';
-    final scheduled = _weekdayRuleParent(date.weekday) ?? holidayOwner(date) ?? weekOwner(date);
+    final scheduled = _weekdayRuleParent(date) ?? holidayOwner(date) ?? weekOwner(date);
     return _applyAbsence(scheduled, date);
   }
 
@@ -127,7 +127,7 @@ class ResolutionEngine {
     final transfer = dayTransferFor(date, child: child);
     if (transfer != null) return transfer.toParent;
     if (isSharedMode) return 'Both';
-    final scheduled = _weekdayRuleParent(date.weekday) ?? holidayOwner(date) ?? weekOwner(date);
+    final scheduled = _weekdayRuleParent(date) ?? holidayOwner(date) ?? weekOwner(date);
     return _applyAbsence(scheduled, date);
   }
 
@@ -195,6 +195,11 @@ class ResolutionEngine {
       if (a.dayOfWeek != date.weekday) continue;
       final start = DateTime(a.startDate.year, a.startDate.month, a.startDate.day);
       if (d.isBefore(start)) continue;
+      // Stop repeating after the arrangement's (inclusive) end date.
+      if (a.endDate != null) {
+        final end = DateTime(a.endDate!.year, a.endDate!.month, a.endDate!.day);
+        if (d.isAfter(end)) continue;
+      }
       // Conditional: skip weeks where the recipient already owns the day.
       if (dayBaseOwner == a.toParent) continue;
       // Suppress when the recipient is absent — they can't take the kids.
@@ -273,7 +278,7 @@ class ResolutionEngine {
     if (transfer != null) {
       final p = _parseTime(transfer.pickupTime);
       if (timeMin >= p.hour * 60 + p.minute) return transfer.toParent;
-      return _weekdayRuleParent(date.weekday) ?? holidayOwner(date) ?? weekOwner(date);
+      return _weekdayRuleParent(date) ?? holidayOwner(date) ?? weekOwner(date);
     }
     return dayOwner(date);
   }
@@ -282,6 +287,8 @@ class ResolutionEngine {
   List<ResolvedEvent> resolveDay(DateTime date) {
     final rules = baseRules.where((r) {
       if (r.dayOfWeek != date.weekday) return false;
+      // Standing events stop repeating after their (inclusive) end date.
+      if (r.endDate != null && date.isAfter(r.endDate!)) return false;
       // Directional handover rules only render when the named parent is the
       // outgoing custody holder. Use holiday owner if one covers this date,
       // otherwise fall back to the rotation week owner.
@@ -379,7 +386,7 @@ class ResolutionEngine {
       scheduleParent = override.assignedParent;
       scheduleReason = override.reason.isEmpty ? null : override.reason;
     } else {
-      final weekdayParent = _weekdayRuleParent(date.weekday);
+      final weekdayParent = _weekdayRuleParent(date);
       final rotationParent = weekdayParent ?? holidayOwner(date) ?? weekOwner(date);
       final absence = absenceFor(date);
       if (absence != null && absence.absentParent == rotationParent) {
@@ -477,9 +484,14 @@ class ResolutionEngine {
     return '$pickup · $ret';
   }
 
-  String? _weekdayRuleParent(int weekday) {
-    final rule = weekdayRules.firstWhereOrNull(
-        (r) => r.active && r.dayOfWeek == weekday);
+  /// The parent assigned by an active weekday rule for [date], or null. A rule
+  /// with an [WeekdayRule.endDate] no longer applies on dates after that day
+  /// (inclusive), so custody falls back to the rotation.
+  String? _weekdayRuleParent(DateTime date) {
+    final rule = weekdayRules.firstWhereOrNull((r) =>
+        r.active &&
+        r.dayOfWeek == date.weekday &&
+        (r.endDate == null || !date.isAfter(r.endDate!)));
     return rule?.assignedParent;
   }
 

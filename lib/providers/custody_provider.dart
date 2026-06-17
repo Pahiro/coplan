@@ -70,6 +70,7 @@ class CustodyRequestsNotifier
     String? note,
     bool repeatWeekly = false,
     String? repeatReason,
+    String? repeatEndDate,
     bool toParentCollects = true,
     bool toParentReturns  = false,
     String? recipientUserId,
@@ -142,6 +143,7 @@ class CustodyRequestsNotifier
             dayOfWeek:      date_.weekday,
             assignedParent: toParent,
             reason:         reason,
+            endDate:        repeatEndDate,
           );
     }
   }

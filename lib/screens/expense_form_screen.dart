@@ -10,6 +10,7 @@ import '../providers/auth_provider.dart';
 import '../providers/expense_provider.dart';
 import '../providers/household_provider.dart';
 import '../widgets/common.dart';
+import '../widgets/form_fields.dart';
 
 class ExpenseFormScreen extends ConsumerStatefulWidget {
   /// Pass an existing expense to edit; null = create new.
@@ -32,6 +33,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
   bool _isRecurring = false;
   String _recurrence = 'monthly';
   int? _dueDay;
+  DateTime? _endDate; // optional "repeats until" for recurring expenses
   int _splitPercent = 100;
   bool _saving = false;
   XFile? _receipt;
@@ -52,6 +54,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
       _isRecurring = e.isRecurring;
       _recurrence  = e.recurrence ?? 'monthly';
       _dueDay      = e.dueDay;
+      _endDate     = e.endDate;
     }
   }
 
@@ -223,6 +226,12 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
                   return null;
                 },
               ),
+              const SizedBox(height: 12),
+              EndDateField(
+                value: _endDate,
+                label: 'Repeats forever (set an end date)',
+                onChanged: (d) => setState(() => _endDate = d),
+              ),
             ],
 
             const SizedBox(height: 24),
@@ -312,6 +321,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
               recurrence: _isRecurring ? _recurrence : null,
               dueDay: _isRecurring ? _dueDay : null,
               nextDueDate: nextDue,
+              endDate: _isRecurring ? _endDate : null,
               receipt: receiptFile,
             );
       } else {
@@ -327,6 +337,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
               dueDay: _isRecurring ? _dueDay : null,
               nextDueDate: nextDue,
               startDate: DateTime.now(),
+              endDate: _isRecurring ? _endDate : null,
               splitToUserId: otherParentId,
               splitPercent: _splitPercent,
               receipt: receiptFile,

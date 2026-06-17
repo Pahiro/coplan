@@ -21,6 +21,9 @@ class RecurringArrangement {
   final bool toParentCollects;
   final bool toParentReturns;
   final DateTime startDate;
+  /// Optional last date (inclusive) this arrangement repeats on. When set, no
+  /// virtual occurrence is expanded after [endDate]. Null = repeats forever.
+  final DateTime? endDate;
   final String? note;
   final bool active;
 
@@ -35,6 +38,7 @@ class RecurringArrangement {
     this.toParentCollects = true,
     this.toParentReturns = false,
     required this.startDate,
+    this.endDate,
     this.note,
     this.active = true,
   });
@@ -51,6 +55,7 @@ class RecurringArrangement {
         toParentCollects: (j['to_parent_collects'] as bool?) ?? true,
         toParentReturns:  (j['to_parent_returns'] as bool?) ?? false,
         startDate:        DateTime.parse(j['start_date'] as String),
+        endDate:          _parseDate(j['end_date'] as String?),
         note:             _nonEmpty(j['note'] as String?),
         active:           (j['active'] as bool?) ?? true,
       );
@@ -80,6 +85,9 @@ class RecurringArrangement {
       requestId.startsWith('recurring:') ? requestId.split(':')[1] : null;
 
   static String? _nonEmpty(String? s) => (s == null || s.isEmpty) ? null : s;
+
+  static DateTime? _parseDate(String? s) =>
+      (s == null || s.isEmpty) ? null : DateTime.tryParse(s);
 
   static String _iso(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-'

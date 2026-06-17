@@ -36,6 +36,7 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
   late int       _dayOfWeek;
   TimeOfDay      _time     = const TimeOfDay(hour: 14, minute: 30);
   TimeOfDay?     _endTime;
+  DateTime?      _endDate; // standing events only — optional "repeats until"
   String         _child    = 'All';
   bool           _isShared = false; // only used for standing events
   bool           _saving   = false;
@@ -95,6 +96,7 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
               activity:  _activityCtrl.text.trim(),
               location:  _locationCtrl.text.trim(),
               isShared:  _isShared,
+              endDate:   _endDate != null ? isoDate(_endDate!) : null,
             );
       } else {
         // Use rotation to determine responsible parent for that date.
@@ -240,8 +242,14 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
               onChanged: (v) => setState(() => _child = v),
             ),
 
-            // Shared toggle — standing events only (one-off events are always shared)
+            // Optional end date + shared toggle — standing events only
             if (_mode == _AddMode.standing) ...[
+              const SizedBox(height: 12),
+              EndDateField(
+                value: _endDate,
+                label: 'Repeats forever (set an end date)',
+                onChanged: (d) => setState(() => _endDate = d),
+              ),
               const SizedBox(height: 4),
               SwitchListTile(
                 value: _isShared,

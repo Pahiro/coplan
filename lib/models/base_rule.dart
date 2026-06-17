@@ -17,6 +17,10 @@ class BaseRule {
   /// Used for directional handover rules — one per parent with different times.
   final String? handoverFrom;
 
+  /// Optional last date (inclusive) this standing event repeats on. When set,
+  /// the rule no longer renders on dates after [endDate]. Null = repeats forever.
+  final DateTime? endDate;
+
   const BaseRule({
     required this.id,
     required this.childName,
@@ -26,6 +30,7 @@ class BaseRule {
     required this.activity,
     this.isShared = false,
     this.handoverFrom,
+    this.endDate,
   });
 
   factory BaseRule.fromRecord(Map<String, dynamic> j) => BaseRule(
@@ -39,5 +44,9 @@ class BaseRule {
         handoverFrom: (j['handover_from'] as String?)?.isNotEmpty == true
             ? j['handover_from'] as String
             : null,
+        endDate: _parseDate(j['end_date'] as String?),
       );
+
+  static DateTime? _parseDate(String? s) =>
+      (s == null || s.isEmpty) ? null : DateTime.tryParse(s);
 }

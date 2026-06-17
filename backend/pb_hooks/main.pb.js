@@ -111,6 +111,8 @@ cronAdd("freezeRecurring", "5 0 * * *", () => {
             };
 
             // Mirror the app engine's baseOwner: weekday rule > rotation.
+            // Each entry keeps the rule's optional end_date so a lapsed rule
+            // falls back to the rotation (inclusive end date).
             let weekdayRuleMap = {};
             try {
                 const filter = hId
@@ -118,12 +120,19 @@ cronAdd("freezeRecurring", "5 0 * * *", () => {
                     : "active = true";
                 const wdRules = dao.findRecordsByFilter("custody_weekday_rules", filter, "", 500, 0);
                 for (const r of wdRules) {
-                    weekdayRuleMap[r.getInt("day_of_week")] = r.get("parent");
+                    weekdayRuleMap[r.getInt("day_of_week")] = {
+                        parent:  r.get("parent"),
+                        endDate: r.get("end_date") || "",
+                    };
                 }
             } catch (_) {}
             const baseOwner = (d) => {
                 if (isShared) return "Both";
-                return weekdayRuleMap[isoDow(d)] || rotationOwner(d);
+                const wr = weekdayRuleMap[isoDow(d)];
+                if (wr && wr.parent && !(wr.endDate && fmt(d) > wr.endDate)) {
+                    return wr.parent;
+                }
+                return rotationOwner(d);
             };
 
             // Load absence_periods for this household to apply the custody flip
@@ -171,12 +180,14 @@ cronAdd("freezeRecurring", "5 0 * * *", () => {
                 const toParent  = a.get("to_parent");
                 const child     = a.get("child_name") || "All";
                 const startDate = a.get("start_date") || "";
+                const endDate   = a.get("end_date") || "";
 
                 for (let i = 14; i >= 1; i--) {
                     const d = new Date(today.getTime() - i * DAY);
                     if (isoDow(d) !== dow) continue;
                     const dStr = fmt(d);
                     if (startDate && dStr < startDate) continue;
+                    if (endDate && dStr > endDate) continue; // arrangement lapsed
 
                     // Only fire on weeks where the OTHER parent (after absence flip) owns the day.
                     const rawOwner = baseOwner(d);

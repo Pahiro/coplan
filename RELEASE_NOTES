@@ -1,3 +1,3 @@
-CoPlan — record who each expense gets paid to.
-• New Pay to field on expenses: note the beneficiary for a cost (a holiday-care provider, a sports club, an account number) so it is clear where the money goes.
-• Tidied up Settings — the old per-person banking profile is gone; payment details now live on the expense itself, where you actually need them.
+CoPlan — set an end date for anything that repeats.
+• Standing events, weekly custody handovers, weekday rules and recurring expenses can now take an optional end date, so they stop repeating after the day you choose.
+• Leave it blank to repeat forever, just like before — set a date and the item simply stops the day after, across the calendar, dashboard and home-screen widgets.

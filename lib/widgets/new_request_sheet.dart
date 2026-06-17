@@ -34,6 +34,7 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
   bool       _toParentCollects = true;
   bool       _toParentReturns  = false;
   bool       _repeatWeekly     = false;
+  DateTime?  _repeatEndDate; // optional "repeats until" for the standing rule
   final _noteCtrl = TextEditingController();
 
   @override
@@ -66,6 +67,7 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
       _date         = picked;
       _pickupTime   = _defaultPickupTime(picked);
       _repeatWeekly = false;
+      _repeatEndDate = null;
     });
   }
 
@@ -104,6 +106,7 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
             note:             _noteCtrl.text.isEmpty ? null : _noteCtrl.text,
             repeatWeekly:     !isHelper && _repeatWeekly && !_hasReturnTime,
             repeatReason:     _noteCtrl.text.isNotEmpty ? _noteCtrl.text : null,
+            repeatEndDate:    _repeatEndDate != null ? isoDate(_repeatEndDate!) : null,
             toParentCollects: _toParentCollects,
             toParentReturns:  _toParentReturns,
             recipientUserId:  recipientUserId,
@@ -308,6 +311,15 @@ class _NewRequestSheetState extends ConsumerState<NewRequestSheet> {
                     : 'One-time request only'),
                 contentPadding: EdgeInsets.zero,
               ),
+              if (_repeatWeekly) ...[
+                const SizedBox(height: 8),
+                EndDateField(
+                  value: _repeatEndDate,
+                  firstDate: _date,
+                  label: 'Repeats forever (set an end date)',
+                  onChanged: (d) => setState(() => _repeatEndDate = d),
+                ),
+              ],
             ],
 
             if (_hasReturnTime) ...[

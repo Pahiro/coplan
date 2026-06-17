@@ -193,6 +193,7 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
     required String location,
     required bool isShared,
     String? handoverFrom,
+    String? endDate,
   }) async {
     await pb.collection('rules_base').create(body: {
       'child_name':    childName,
@@ -202,6 +203,7 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
       'location':      location,
       'is_shared':     isShared,
       'handover_from': handoverFrom ?? '',
+      'end_date':      endDate ?? '',
       'household':     _requireHouseholdId(ref),
     });
     _invalidate();
@@ -216,6 +218,7 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
     required String location,
     required bool isShared,
     String? handoverFrom,
+    String? endDate,
   }) async {
     await pb.collection('rules_base').update(id, body: {
       'child_name':    childName,
@@ -225,6 +228,7 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
       'location':      location,
       'is_shared':     isShared,
       'handover_from': handoverFrom ?? '',
+      'end_date':      endDate ?? '',
     });
     _invalidate();
   }
@@ -302,6 +306,7 @@ class WeekdayRulesNotifier extends AsyncNotifier<void> {
     required int dayOfWeek,
     required String assignedParent,
     required String reason,
+    String? endDate,
   }) async {
     try {
       final existing = await pb
@@ -317,6 +322,7 @@ class WeekdayRulesNotifier extends AsyncNotifier<void> {
       'assigned_parent': assignedParent,
       'reason':          reason,
       'active':          true,
+      'end_date':        endDate ?? '',
       'household':       _requireHouseholdId(ref),
     });
     _invalidate();
@@ -356,6 +362,7 @@ class RecurringArrangementsNotifier extends AsyncNotifier<void> {
     bool toParentCollects = true,
     bool toParentReturns = false,
     required String startDate,
+    String? endDate,
     String? note,
   }) async {
     try {
@@ -377,6 +384,7 @@ class RecurringArrangementsNotifier extends AsyncNotifier<void> {
       'to_parent_collects': toParentCollects,
       'to_parent_returns':  toParentReturns,
       'start_date':         startDate,
+      'end_date':           endDate ?? '',
       'note':               note ?? '',
       'active':             true,
       'created_by':         pb.authStore.record?.id ?? '',
