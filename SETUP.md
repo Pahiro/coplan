@@ -8,7 +8,7 @@
 | Tunnel | Cloudflared | Same LXC |
 | Web app | Flutter web build | Served by PocketBase static files |
 | Android app | Flutter APK | Sideloaded or distributed manually |
-| Push notifications | Flutter (PocketBase SSE + local notifications) | Built-in — no extra server |
+| Push notifications | FCM (server-side) + PocketBase SSE for foreground | `coplan-push` Node sidecar on the LXC |
 | Dev / testing | PocketBase + `flutter run -d chrome` | Windows workstation |
 
 ---
@@ -39,6 +39,15 @@ flutter build apk \
 # Default is 2026-05-18 if omitted.
 # PB_URL defaults to http://localhost:8090 for local dev.
 ```
+
+### Firebase config for Android builds (not in git)
+
+`android/app/google-services.json` is **gitignored** (it holds the Android
+client API key). Before building the APK, download it from the Firebase
+console → project **coplan-23f80** → Project settings → your Android app
+(`com.coplan.app`) → `google-services.json`, and place it at
+`android/app/google-services.json`. Push setup also needs the FCM service-account
+key on the server — see `backend/push-sidecar/README.md`.
 
 ---
 
