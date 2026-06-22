@@ -3,6 +3,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 
 import '../core/pb_client.dart';
+import 'notification_service.dart';
 
 /// Background isolate handler. Required by firebase_messaging to be a top-level
 /// (or static) function annotated with @pragma('vm:entry-point').
@@ -15,13 +16,14 @@ Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
   // Intentionally empty — system handles notification display.
 }
 
-/// True background push via FCM.
+/// True background push via FCM. FCM is the single source of OS notifications:
+///   • App foreground → the system doesn't auto-display, so [onMessage] renders
+///     the notification (banner + heads-up) itself.
+///   • App background/killed → the FCM "notification" message is shown by the
+///     Android system automatically.
 ///
-/// Division of labour with the SSE path ([realtimeNotificationsProvider]):
-///   • App foreground  → SSE shows the in-app banner + OS notification. We
-///     SUPPRESS the foreground FCM message so there's no duplicate.
-///   • App background/killed → no SSE connection; the FCM "notification"
-///     message is shown by the Android system automatically.
+/// The SSE path ([realtimeNotificationsProvider]) no longer shows notifications
+/// (avoids duplicates); it only refreshes in-app data while the app is open.
 ///
 /// The server (pb_hooks/main.pb.js) is what actually sends these, looking up
 /// the tokens this service registers in the `device_tokens` collection.
@@ -40,9 +42,19 @@ class PushService {
 
       FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
 
-      // Foreground: suppress — the SSE path already shows it. (Listening anyway
-      // so the message is consumed rather than logged as unhandled.)
-      FirebaseMessaging.onMessage.listen((_) {});
+      // Foreground: the system only auto-displays notification messages when
+      // the app is backgrounded, so render foreground ones ourselves. FCM is
+      // the single source of OS notifications (no SSE duplication), which also
+      // means foreground delivery no longer depends on the SSE connection.
+      FirebaseMessaging.onMessage.listen((message) {
+        final n = message.notification;
+        if (n == null) return;
+        NotificationService.show(
+          title: n.title ?? 'CoPlan',
+          body: n.body ?? '',
+          id: (message.messageId ?? n.title ?? '').hashCode.abs() % 100000,
+        );
+      });
 
       // Token rotation → re-register against the currently logged-in user.
       FirebaseMessaging.instance.onTokenRefresh.listen((token) {
