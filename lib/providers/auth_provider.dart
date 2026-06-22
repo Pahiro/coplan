@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../core/pb_client.dart';
+import '../services/push_service.dart';
 
 class AuthState {
   final bool isLoggedIn;
@@ -26,7 +27,10 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
   Future<AuthState> build() async {
     if (pb.authStore.isValid) {
       final model = pb.authStore.record;
-      if (model?.id != null) _stampClientVersion(model!.id);
+      if (model?.id != null) {
+        _stampClientVersion(model!.id);
+        PushService.registerForUser(model.id);
+      }
       return AuthState(
         isLoggedIn: true,
         userId: model?.id,
@@ -43,6 +47,7 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
       final result =
           await pb.collection('users').authWithPassword(email, password);
       _stampClientVersion(result.record.id);
+      PushService.registerForUser(result.record.id);
       return AuthState(
         isLoggedIn: true,
         userId: result.record.id,
@@ -62,6 +67,8 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
   }
 
   Future<void> logout() async {
+    // Remove this device's push token first — needs the auth token to delete.
+    await PushService.unregister();
     pb.authStore.clear();
     state = const AsyncData(AuthState.loggedOut);
   }
@@ -103,6 +110,7 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
       final result =
           await pb.collection('users').authWithPassword(email, password);
       _stampClientVersion(result.record.id);
+      PushService.registerForUser(result.record.id);
       return AuthState(
         isLoggedIn: true,
         userId: result.record.id,

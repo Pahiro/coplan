@@ -1,0 +1,22 @@
+[Unit]
+Description=CoPlan FCM push sidecar (loopback FCM v1 sender)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/coplan-push
+Environment=PUSH_PORT=8091
+Environment=GOOGLE_APPLICATION_CREDENTIALS=/opt/coplan-push/service-account.json
+# PUSH_SECRET is kept out of this unit file — set it in the drop-in below so it
+# is not world-readable. See README. Create with:
+#   systemctl edit coplan-push   ->   [Service]\nEnvironment=PUSH_SECRET=<secret>
+ExecStart=/usr/bin/node /opt/coplan-push/index.js
+Restart=on-failure
+RestartSec=3
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

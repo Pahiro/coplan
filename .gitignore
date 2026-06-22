@@ -1,3 +1,7 @@
+# Firebase — contains the Android client API key; keep out of git.
+# Download from the Firebase console (project coplan-23f80) into android/app/.
+android/app/google-services.json
+
 # Miscellaneous
 *.class
 *.log

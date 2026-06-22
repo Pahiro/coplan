@@ -1,0 +1,17 @@
+{
+  "name": "coplan-push",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Loopback FCM sender for CoPlan. PocketBase hooks POST here; this signs and sends FCM HTTP v1 pushes via firebase-admin.",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0"
+  }
+}
