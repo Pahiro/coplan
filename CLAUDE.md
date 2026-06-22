@@ -88,12 +88,12 @@ Access rules restrict every collection to **members of the record's household**
 
 ```bash
 # 1. Back up first
-ssh root@192.168.1.119 "systemctl stop coplan && tar czf /root/coplan-backups/pb_data-$(date +%Y%m%d-%H%M%S).tar.gz -C /opt/coplan pb_data"
+ssh root@192.168.1.219 "systemctl stop coplan && tar czf /root/coplan-backups/pb_data-$(date +%Y%m%d-%H%M%S).tar.gz -C /opt/coplan pb_data"
 # 2. Copy files
-scp backend/pb_migrations/<file>.js root@192.168.1.119:/opt/coplan/pb_migrations/
-scp backend/pb_hooks/main.pb.js     root@192.168.1.119:/opt/coplan/pb_hooks/main.pb.js
+scp backend/pb_migrations/<file>.js root@192.168.1.219:/opt/coplan/pb_migrations/
+scp backend/pb_hooks/main.pb.js     root@192.168.1.219:/opt/coplan/pb_hooks/main.pb.js
 # 3. Start + verify (migration applied, no hook errors, health 200)
-ssh root@192.168.1.119 "systemctl start coplan && sleep 4 && curl -s http://localhost:8090/api/health && journalctl -u coplan -n 15 --no-pager | grep -i error"
+ssh root@192.168.1.219 "systemctl start coplan && sleep 4 && curl -s http://localhost:8090/api/health && journalctl -u coplan -n 15 --no-pager | grep -i error"
 ```
 
 ## Publishing an app update (the in-app updater)
@@ -105,7 +105,7 @@ one shot). Manual equivalent:
 
 1. Bump `version:` in `pubspec.yaml` (e.g. `1.0.4+5` → versionCode 5).
 2. `flutter build apk --release --dart-define=PB_URL=https://coplan.vdgryp.co.za`
-3. `scp …/app-release.apk root@192.168.1.119:/opt/coplan/pb_public/coplan-latest.apk`
+3. `scp …/app-release.apk root@192.168.1.219:/opt/coplan/pb_public/coplan-latest.apk`
 4. Update `app_settings` (sqlite or admin UI):
    - `latest_build` = new versionCode
    - `latest_version` = display version

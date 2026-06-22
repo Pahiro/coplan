@@ -12,6 +12,7 @@ import 'providers/invite_provider.dart';
 import 'providers/queue_count_provider.dart';
 import 'services/notification_service.dart';
 import 'services/offline_cache.dart';
+import 'services/push_service.dart';
 import 'services/queue_service.dart';
 
 void main() async {
@@ -21,6 +22,7 @@ void main() async {
   await initPocketBase(prefs);
   await OfflineCache.init();
   await NotificationService.init();
+  await PushService.init();
   final initialQueueCount = await QueueService.pendingCount();
 
   if (!kIsWeb) {

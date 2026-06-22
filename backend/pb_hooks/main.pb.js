@@ -1,8 +1,10 @@
 /// <reference path="../pb_data/types.d.ts" />
 
-// Notifications are handled via PocketBase real-time subscriptions in the
-// Flutter app (flutter_local_notifications + SSE). No server-side push hooks
-// are required.
+// Notifications: in-app banners + foreground alerts are still driven by the
+// Flutter realtime (SSE) subscriptions, but reliable OS-level / background push
+// is delivered server-side from here via FCM (see the "Push notifications"
+// section at the bottom of this file). The two cooperate: the app suppresses its
+// own OS notification when it received the event live, so there are no doubles.
 
 // ── Freeze recurring custody arrangements into immutable history ─────────────
 //
@@ -402,4 +404,198 @@ cronAdd("generateRecurringSplits", "15 0 * * *", () => {
     } catch (err) {
         console.log("generateRecurringSplits error:", err);
     }
+});
+
+// ── Push notifications (FCM, server-side) ────────────────────────────────────
+//
+// True background push. The coplan-push sidecar (loopback, 127.0.0.1:8091) does
+// the actual FCM HTTP v1 send because PocketBase's JS engine can't mint the
+// RS256 OAuth token Google requires. We just look up the recipients' device
+// tokens, POST them to the sidecar, and prune any tokens it reports as dead.
+//
+// The notification COPY mirrors lib/providers/realtime_provider.dart — keep the
+// two in sync (this fires for everyone; the app's SSE path only fires while
+// open, and suppresses its own OS notification to avoid duplicates).
+
+const PUSH_URL = "http://127.0.0.1:8091/send";
+
+// Send a push to one or more user ids. Never throws — a push failure must not
+// break the record write that triggered it.
+function sendPush(dao, userIds, title, body, data) {
+    try {
+        const secret = $os.getenv("PUSH_SECRET");
+        if (!secret) { console.log("sendPush: PUSH_SECRET not set, skipping"); return; }
+
+        const ids = (Array.isArray(userIds) ? userIds : [userIds]).filter(Boolean);
+        if (ids.length === 0) return;
+
+        // Collect every device token belonging to the recipients.
+        const tokens = [];
+        for (const uid of ids) {
+            let rows = [];
+            try { rows = dao.findRecordsByFilter("device_tokens", "user = {:u}", "", 50, 0, { u: uid }); }
+            catch (_) { rows = []; }
+            for (const r of rows) { const t = r.get("token"); if (t) tokens.push(t); }
+        }
+        if (tokens.length === 0) return;
+
+        const res = $http.send({
+            url:     PUSH_URL,
+            method:  "POST",
+            timeout: 10,
+            headers: { "content-type": "application/json", "x-push-secret": secret },
+            body:    JSON.stringify({ tokens, title, body, data: data || {} }),
+        });
+
+        if (res.statusCode !== 200) {
+            console.log("sendPush: sidecar returned", res.statusCode, res.raw);
+            return;
+        }
+
+        // Prune tokens the sidecar reported as permanently invalid.
+        const results = (res.json && res.json.results) || [];
+        for (const r of results) {
+            if (!r.invalid) continue;
+            try {
+                const dead = dao.findFirstRecordByFilter("device_tokens", "token = {:t}", { t: r.token });
+                dao.deleteRecord(dead);
+            } catch (_) {}
+        }
+    } catch (err) {
+        console.log("sendPush error:", err);
+    }
+}
+
+const money = (cents) => `R ${((Number(cents) || 0) / 100).toFixed(2)}`;
+const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+
+// ── custody_requests → push ──────────────────────────────────────────────────
+// Create: notify the parent being asked (requested_from).
+onRecordAfterCreateRequest((e) => {
+    try {
+        const dao = $app.dao();
+        const r = e.record;
+        const requestedFrom = r.get("requested_from");
+        if (!requestedFrom) return;
+
+        const fromParent = r.get("from_parent") || "";
+        const toParent   = r.get("to_parent")   || "";
+        const child      = r.get("child_name")  || "the children";
+        const date       = r.get("date")        || "an upcoming date";
+        const rtEmpty    = !(r.get("return_time") || "");
+        const rtTbd      = r.getBool("return_time_tbd");
+        const isDayXfer  = rtEmpty && !rtTbd;
+        const toCollects = r.get("to_parent_collects") === false ? false : true;
+        const childStr   = child === "All" ? "the kids" : child;
+
+        const pickupAction = toCollects
+            ? `${toParent} collects ${childStr}`
+            : `${fromParent} drops off ${childStr}`;
+
+        sendPush(
+            dao, requestedFrom,
+            isDayXfer ? "Custody Request" : "Handover Requested",
+            `${pickupAction} on ${date}${isDayXfer ? "" : " (return expected)"}`,
+            { type: "custody_request", id: r.id }
+        );
+    } catch (err) { console.log("custody create push error:", err); }
+}, "custody_requests");
+
+// Update: notify the requester (created_by) when their request is resolved.
+onRecordAfterUpdateRequest((e) => {
+    try {
+        const dao = $app.dao();
+        const r = e.record;
+        const createdBy = r.get("created_by");
+        if (!createdBy) return;
+
+        const status = r.get("status");
+        if (!status || status === "pending") return;
+
+        const child = r.get("child_name") || "the children";
+        const date  = r.get("date")       || "an upcoming date";
+        const whom  = child === "All" ? "the kids" : child;
+
+        let msg = null;
+        if (status === "accepted")  msg = `Your ${whom} request for ${date} was accepted`;
+        else if (status === "declined")  msg = `Your ${whom} request for ${date} was declined`;
+        else if (status === "completed") msg = `Handover for ${whom} on ${date} marked complete`;
+        if (!msg) return;
+
+        sendPush(dao, createdBy, `Request ${cap(status)}`, msg,
+            { type: "custody_update", id: r.id });
+    } catch (err) { console.log("custody update push error:", err); }
+}, "custody_requests");
+
+// ── expense_splits → push ────────────────────────────────────────────────────
+// Resolve the parent shared_expense title for nicer copy.
+function expenseTitle(dao, expenseId) {
+    if (!expenseId) return "a shared expense";
+    try { return dao.findRecordById("shared_expenses", expenseId).get("title") || "a shared expense"; }
+    catch (_) { return "a shared expense"; }
+}
+
+// Create: notify the parent who owes a share.
+onRecordAfterCreateRequest((e) => {
+    try {
+        const dao = $app.dao();
+        const r = e.record;
+        const splitUser = r.get("user");
+        if (!splitUser) return;
+
+        const amountStr = money(r.getInt("amount_due"));
+        const title = expenseTitle(dao, r.get("expense"));
+        sendPush(dao, splitUser, "New shared expense",
+            `${title} — your share is ${amountStr}`,
+            { type: "expense_split", id: r.id });
+    } catch (err) { console.log("expense create push error:", err); }
+}, "expense_splits");
+
+// Update → paid: receipt to the parent whose share was settled.
+onRecordAfterUpdateRequest((e) => {
+    try {
+        const dao = $app.dao();
+        const r = e.record;
+        if (r.get("status") !== "paid") return;
+        const splitUser = r.get("user");
+        if (!splitUser) return;
+
+        const amountStr = money(r.getInt("amount_due"));
+        const title = expenseTitle(dao, r.get("expense"));
+        sendPush(dao, splitUser, "Payment recorded",
+            `Your ${amountStr} share of ${title} was marked paid`,
+            { type: "expense_paid", id: r.id });
+    } catch (err) { console.log("expense paid push error:", err); }
+}, "expense_splits");
+
+// ── Self-test endpoint ───────────────────────────────────────────────────────
+// POST /api/coplan/test-notification  → pushes a TEST notification to the
+// caller's own registered devices. Used to verify the whole chain end-to-end
+// (token registration → hook → sidecar → FCM → device) without creating junk
+// custody/expense records. Returns how many tokens were targeted + the result.
+routerAdd("POST", "/api/coplan/test-notification", (c) => {
+    const info = $apis.requestInfo(c);
+    const authRecord = info.authRecord;
+    if (!authRecord) throw new ForbiddenError("Authentication required.");
+
+    const dao = $app.dao();
+    const userId = authRecord.id;
+
+    let tokenCount = 0;
+    try { tokenCount = dao.findRecordsByFilter("device_tokens", "user = {:u}", "", 50, 0, { u: userId }).length; }
+    catch (_) {}
+
+    if (tokenCount === 0) {
+        return c.json(200, {
+            success: false,
+            tokens: 0,
+            message: "No registered devices for this user. Open the app (logged in) at least once to register a push token.",
+        });
+    }
+
+    sendPush(dao, userId, "CoPlan test ✅",
+        "If you can see this, push notifications are working.",
+        { type: "test" });
+
+    return c.json(200, { success: true, tokens: tokenCount });
 });

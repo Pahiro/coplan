@@ -73,6 +73,12 @@
                 android:resource="@xml/coplan_widget_info_3" />
         </receiver>
 
+        <!-- FCM: background "notification" messages display on this existing
+             high-importance channel (created by NotificationService). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="coplan_requests" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

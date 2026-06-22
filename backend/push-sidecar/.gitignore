@@ -1,0 +1,3 @@
+# NEVER commit the service-account private key or installed deps.
+service-account.json
+node_modules/
