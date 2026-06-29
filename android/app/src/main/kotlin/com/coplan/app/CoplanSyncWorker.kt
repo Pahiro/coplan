@@ -388,6 +388,10 @@ class CoplanSyncWorker(
             val rule = rules.getJSONObject(i)
             if (rule.optInt("day_of_week") != dow) continue
             if (pastEndDate(rule, date)) continue // standing event has lapsed
+            // Directional handover rules only render when the named parent is
+            // the outgoing custody holder (mirrors Dart resolveDay).
+            val handoverFrom = rule.optString("handover_from")
+            if (handoverFrom.isNotEmpty() && handoverFrom != rotationOwner(date, cfg)) continue
 
             val childName = rule.optString("child_name", "All")
             val time      = rule.optString("event_time", "08:00")
