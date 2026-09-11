@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -5,40 +6,83 @@ import 'package:home_widget/home_widget.dart';
 
 import '../core/constants.dart';
 import '../core/pb_client.dart';
-import '../engine/resolution_engine.dart';
+import '../engine/engine_factory.dart';
+import '../models/absence_period.dart';
+import '../models/app_colors.dart';
 import '../models/base_rule.dart';
 import '../models/custody_request.dart';
 import '../models/holiday_block.dart';
+import '../models/household.dart';
 import '../models/manual_override.dart';
-import '../models/recurring_arrangement.dart';
-import '../models/resolved_event.dart';
-import '../models/rotation_scheme.dart';
-import '../models/weekday_rule.dart';
+import '../utils/dates.dart';
 
-/// Fetches the next upcoming events from PocketBase and writes them to
-/// SharedPreferences so the Android Glance widget can read them offline.
-///
-/// Call this on app resume and after any schedule mutation.
+/// Resolves the next few events with the real engine and writes them to
+/// SharedPreferences for the Android Glance widgets. The Kotlin
+/// `CoplanSyncWorker` writes the same data in the background; this is the
+/// reliable path because Doze often defers the worker.
 class WidgetCacheService {
   WidgetCacheService._();
 
-  static Future<void> updateCache() async {
-    if (kIsWeb) return; // Widget is Android-only
-    try {
-      final rules        = await _fetchBaseRules();
-      final weekdayRules = await _fetchWeekdayRules();
-      final recurring    = await _fetchRecurring();
-      final holidays     = await _fetchHolidayBlocks();
-      final upcoming     = await _nextUpcomingEvents(rules, weekdayRules, recurring, holidays);
+  static Timer? _debounce;
 
-      // Only overwrite the cache when we actually have events — an empty result
-      // from a transient auth blip or network hiccup should never wipe good data.
-      if (upcoming.isEmpty) return;
-      final json = jsonEncode(upcoming.map((e) => e.toJson()).toList());
-      await HomeWidget.saveWidgetData<String>(AppConstants.widgetCacheKey, json);
-      // Redraw every placed widget style. Each style is a separate Glance
-      // receiver, so we must broadcast an update to all three — updating only
-      // 'CoplanWidget' left Material/Timeline widgets showing stale data.
+  /// Coalesces bursts of changes (e.g. several realtime events) into one refresh.
+  static void updateSoon() {
+    if (kIsWeb) return;
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(seconds: 2), updateCache);
+  }
+
+  static Future<void> updateCache() async {
+    if (kIsWeb) return;
+    try {
+      final household = await _fetchHousehold();
+      if (household == null) return;
+
+      final today = dateOnly(DateTime.now());
+      final from  = isoDate(today);
+      final to    = isoDate(addDays(today, 2));
+      final mine  = 'household = "${household.id}"';
+
+      Future<List<T>> list<T>(String collection, String filter,
+          T Function(Map<String, dynamic>) parse) async {
+        final records = await pb.collection(collection).getFullList(filter: filter);
+        return records.map((r) => parse(r.toJson())).toList();
+      }
+
+      final engine = buildEngine(
+        household: household,
+        baseRules: await list('rules_base', mine, BaseRule.fromRecord),
+        overrides: await list('manual_overrides',
+            '$mine && target_date >= "$from" && target_date <= "$to"',
+            ManualOverride.fromRecord),
+        custodyRequests: await list('custody_requests',
+            '$mine && status = "accepted" && date >= "$from" && date <= "$to"',
+            CustodyRequest.fromRecord),
+        absencePeriods: await list('absence_periods',
+            '$mine && start_date <= "$to" && end_date >= "$from"',
+            AbsencePeriod.fromRecord),
+        holidayBlocks: await list('holiday_blocks',
+            '$mine && start_date <= "$to" && end_date >= "$from"',
+            HolidayBlock.fromRecord),
+      );
+
+      final colors = AppColors.forHousehold(household);
+      final now    = DateTime.now();
+      final nowMin = now.hour * 60 + now.minute;
+
+      final upcoming = <Map<String, dynamic>>[];
+      for (var i = 0; i < 3 && upcoming.length < 3; i++) {
+        for (final e in engine.resolveDay(addDays(today, i))) {
+          if (i == 0 && e.time.hour * 60 + e.time.minute < nowMin) continue;
+          upcoming.add(e.toJson(
+              parentColor: colors.parentColor(e.assignedParent).toARGB32()));
+          if (upcoming.length == 3) break;
+        }
+      }
+
+      await HomeWidget.saveWidgetData<String>(
+          AppConstants.widgetCacheKey, jsonEncode(upcoming));
+      // Each widget style is a separate Glance receiver — redraw all three.
       for (final receiver in AppConstants.widgetReceivers) {
         await HomeWidget.updateWidget(
           androidName: receiver,
@@ -46,172 +90,24 @@ class WidgetCacheService {
         );
       }
     } catch (_) {
-      // Fail silently — widget will show stale data until next successful sync
+      // Keep the last good data; the next refresh or the worker will retry.
     }
   }
 
-  static Future<List<ResolvedEvent>> _nextUpcomingEvents(
-    List<BaseRule> rules,
-    List<WeekdayRule> weekdayRules,
-    List<RecurringArrangement> recurring,
-    List<HolidayBlock> holidays,
-  ) async {
-    final now       = DateTime.now();
-    final nowMinutes = now.hour * 60 + now.minute;
-    final events    = <ResolvedEvent>[];
+  static Future<HouseholdConfig?> _fetchHousehold() async {
+    final userId = pb.authStore.record?.id;
+    if (userId == null) return null;
+    final user = await pb.collection('users').getOne(userId);
+    final hid = user.data['active_household'] as String?;
+    if (hid == null || hid.isEmpty) return null;
 
-    // Fetch rotation config from household or fall back to app_settings
-    final rotation = await _fetchRotationConfig();
-
-    for (int i = 0; i < 3; i++) {
-      final date     = now.add(Duration(days: i));
-      final overrides    = await _fetchOverridesForDate(date);
-      final custody      = await _fetchCustodyForDate(date);
-      final dayHolidays  = holidays.where((b) => b.coversDate(date)).toList();
-      final dayEvents = ResolutionEngine(
-        baseRules:             rules,
-        overrides:             overrides,
-        custodyRequests:       custody,
-        weekdayRules:          weekdayRules,
-        recurringArrangements: recurring,
-        holidayBlocks:         dayHolidays,
-        rotationAnchor:        rotation.$1,
-        rotationParentEven:    rotation.$2,
-        rotationParentOdd:     rotation.$3,
-        rotationScheme:        rotation.$4,
-        householdMode:         rotation.$5,
-      ).resolveDay(date);
-      events.addAll(dayEvents);
-    }
-
-    final upcoming = events.where((e) {
-      final eMin    = e.time.hour * 60 + e.time.minute;
-      final isToday = e.date.year  == now.year &&
-                      e.date.month == now.month &&
-                      e.date.day   == now.day;
-      return !isToday || eMin >= nowMinutes;
-    });
-
-    return upcoming.take(3).toList();
-  }
-
-  static Future<List<BaseRule>> _fetchBaseRules() async {
-    final records = await pb.collection('rules_base').getFullList();
-    return records.map((r) => BaseRule.fromRecord(r.toJson())).toList();
-  }
-
-  static Future<List<WeekdayRule>> _fetchWeekdayRules() async {
-    try {
-      final records = await pb
-          .collection('custody_weekday_rules')
-          .getFullList(filter: 'active = true');
-      return records.map((r) => WeekdayRule.fromRecord(r.toJson())).toList();
-    } catch (_) {
-      return [];
-    }
-  }
-
-  static Future<List<RecurringArrangement>> _fetchRecurring() async {
-    try {
-      final records = await pb
-          .collection('custody_recurring')
-          .getFullList(filter: 'active = true');
-      return records
-          .map((r) => RecurringArrangement.fromRecord(r.toJson()))
-          .toList();
-    } catch (_) {
-      return [];
-    }
-  }
-
-  static Future<List<HolidayBlock>> _fetchHolidayBlocks() async {
-    try {
-      final records = await pb.collection('holiday_blocks').getFullList();
-      return records.map((r) => HolidayBlock.fromRecord(r.toJson())).toList();
-    } catch (_) {
-      return [];
-    }
-  }
-
-  static Future<List<ManualOverride>> _fetchOverridesForDate(
-      DateTime date) async {
-    final dateStr =
-        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-    final records = await pb
-        .collection('manual_overrides')
-        .getFullList(filter: 'target_date = "$dateStr"');
-    return records.map((r) => ManualOverride.fromRecord(r.toJson())).toList();
-  }
-
-  static Future<List<CustodyRequest>> _fetchCustodyForDate(
-      DateTime date) async {
-    final dateStr =
-        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-    try {
-      final records = await pb.collection('custody_requests').getFullList(
-          filter: 'date = "$dateStr" && status = "accepted"');
-      return records
-          .map((r) => CustodyRequest.fromRecord(r.toJson()))
-          .toList();
-    } catch (_) {
-      return [];
-    }
-  }
-
-  /// Fetches rotation anchor + parent names + scheme from the active household.
-  /// Falls back to app_settings for legacy single-household setups.
-  static Future<(DateTime, String, String, RotationScheme?, String)> _fetchRotationConfig() async {
-    try {
-      final userId = pb.authStore.record?.id ?? '';
-      final user = await pb.collection('users').getOne(userId);
-      final householdId = user.data['active_household'] as String?;
-      if (householdId != null && householdId.isNotEmpty) {
-        final h = await pb.collection('households').getOne(householdId);
-        final anchorStr = h.data['rotation_anchor'] as String? ?? '';
-        final parts = anchorStr.split('-');
-        final anchor = parts.length == 3
-            ? DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]))
-            : DateTime(2025, 1, 6);
-
-        // Resolve parent display names from household_members
-        final members = await pb.collection('household_members')
-            .getFullList(filter: 'household = "$householdId" && role = "parent"');
-        final evenId = h.data['rotation_parent_even'] as String? ?? '';
-        final oddId  = h.data['rotation_parent_odd'] as String? ?? '';
-        String evenName = 'Parent A';
-        String oddName  = 'Parent B';
-        for (final m in members) {
-          if (m.data['user'] == evenId) evenName = m.data['display_name'] as String? ?? evenName;
-          if (m.data['user'] == oddId)  oddName  = m.data['display_name'] as String? ?? oddName;
-        }
-
-        // Rotation scheme
-        final schemeType = h.data['rotation_scheme_type'] as String? ?? 'weekly';
-        List<int>? pattern;
-        final rawPattern = h.data['rotation_pattern'];
-        if (rawPattern is List) pattern = rawPattern.cast<int>();
-        final scheme = RotationScheme.fromJson(schemeType, pattern);
-
-        final mode = h.data['mode'] as String? ?? 'custody';
-        return (anchor, evenName, oddName, scheme, mode);
-      }
-    } catch (_) {}
-
-    // Legacy fallback: read from app_settings
-    try {
-      final settings = await pb.collection('app_settings').getFullList();
-      DateTime anchor = DateTime(2025, 1, 6);
-      for (final s in settings) {
-        if (s.data['key'] == 'rotation_anchor') {
-          final parts = (s.data['value'] as String).split('-');
-          if (parts.length == 3) {
-            anchor = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
-          }
-        }
-      }
-      return (anchor, AppConstants.parentBennet, AppConstants.parentJana, null, 'custody');
-    } catch (_) {
-      return (DateTime(2025, 1, 6), AppConstants.parentBennet, AppConstants.parentJana, null, 'custody');
-    }
+    final h        = await pb.collection('households').getOne(hid);
+    final members  = await pb.collection('household_members').getFullList(filter: 'household = "$hid"');
+    final children = await pb.collection('children').getFullList(filter: 'household = "$hid"');
+    return HouseholdConfig.fromRecord(
+      h.toJson(),
+      members: members.map((r) => HouseholdMember.fromRecord(r.toJson())).toList(),
+      children: children.map((r) => HouseholdChild.fromRecord(r.toJson())).toList(),
+    );
   }
 }

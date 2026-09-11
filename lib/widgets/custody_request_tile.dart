@@ -5,112 +5,168 @@ import 'package:intl/intl.dart';
 import '../models/custody_request.dart';
 import '../providers/auth_provider.dart';
 import '../providers/custody_provider.dart';
+import '../providers/household_provider.dart';
+import '../utils/dates.dart';
 import 'common.dart';
 import 'custody_request_edit_sheet.dart';
 
+/// A request — or both days of a swap — with the actions the current user may
+/// take: accept/decline when it's addressed to them; edit, withdraw or cancel
+/// when they made it.
 class CustodyRequestTile extends ConsumerWidget {
-  final CustodyRequest request;
-  final String myId;
+  final RequestGroup group;
 
-  const CustodyRequestTile({
-    super.key,
-    required this.request,
-    required this.myId,
-  });
+  const CustodyRequestTile({super.key, required this.group});
 
-  /// Declining without context invites a phone call — offer an optional note
-  /// so the reason travels with the request.
-  Future<void> _decline(BuildContext context, WidgetRef ref) async {
-    final noteCtrl = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Decline request?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: noteCtrl,
-              autofocus: true,
-              maxLines: 2,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                labelText: 'Reason (optional)',
-                hintText: 'e.g. We have a family lunch that day',
-                border: OutlineInputBorder(),
-              ),
+  Future<void> _respond(BuildContext context, WidgetRef ref,
+      {required bool accept}) async {
+    String? note;
+    if (!accept) {
+      // Declining without context invites a phone call — offer a reason.
+      final noteCtrl = TextEditingController();
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(group.isSwap ? 'Decline swap?' : 'Decline request?'),
+          content: TextField(
+            controller: noteCtrl,
+            autofocus: true,
+            maxLines: 2,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              labelText: 'Reason (optional)',
+              hintText: 'e.g. We have a family lunch that day',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(ctx).colorScheme.error),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Decline'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          FilledButton(
-            style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(ctx).colorScheme.error),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Decline'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
+      );
+      if (confirmed != true) return;
+      note = noteCtrl.text;
+    }
+    try {
       await ref
           .read(custodyRequestsProvider.notifier)
-          .respond(request.id, accept: false, note: noteCtrl.text);
+          .respond(group, accept: accept, note: note);
+    } catch (e) {
+      if (context.mounted) showErrorSnack(context, e);
     }
   }
 
-  String _pickupLabel(String myName) {
-    final amIToParent = myName == request.toParent;
-    if (request.toParentCollects) {
-      return amIToParent
-          ? 'You collect at ${request.pickupTime}'
-          : '${request.toParent} collects at ${request.pickupTime}';
-    } else {
-      return amIToParent
-          ? '${request.fromParent} drops off at ${request.pickupTime}'
-          : 'You drop off at ${request.pickupTime}';
+  Future<void> _cancel(
+      BuildContext context, WidgetRef ref, String otherName) async {
+    final accepted = group.status == CustodyStatus.accepted;
+    final ok = await confirmDialog(
+      context,
+      title: accepted
+          ? (group.isSwap ? 'Cancel this swap?' : 'Cancel this agreement?')
+          : 'Withdraw request?',
+      body: accepted
+          ? '${group.isSwap ? 'Both days go' : 'The day goes'} back to the '
+            'normal schedule. $otherName will be notified.'
+          : '$otherName will be told you withdrew it.',
+      action: accepted ? 'Cancel it' : 'Withdraw',
+      cancel: 'Keep',
+      destructive: true,
+    );
+    if (!ok || !context.mounted) return;
+    try {
+      await ref.read(custodyRequestsProvider.notifier).deleteGroup(group);
+    } catch (e) {
+      if (context.mounted) showErrorSnack(context, e);
     }
   }
 
-  String? _returnLabel(String myName) {
-    if (request.isDayTransfer) return null;
-    final amIToParent = myName == request.toParent;
-    final t = request.returnTimeTbd ? 'TBD' : (request.returnTime ?? '?');
-    if (request.toParentReturns) {
+  String _pickupLabel(CustodyRequest r, String myName) {
+    final amIToParent = myName == r.toParent;
+    if (r.toParentCollects) {
+      return amIToParent
+          ? 'You collect at ${r.pickupTime}'
+          : '${r.toParent} collects at ${r.pickupTime}';
+    }
+    return amIToParent
+        ? '${r.fromParent} drops off at ${r.pickupTime}'
+        : 'You drop off at ${r.pickupTime}';
+  }
+
+  String? _returnLabel(CustodyRequest r, String myName) {
+    if (r.isDayTransfer) return null;
+    final amIToParent = myName == r.toParent;
+    final t = r.returnTimeTbd ? 'TBD' : (r.returnTime ?? '?');
+    if (r.toParentReturns) {
       return amIToParent
           ? 'You drop back at $t'
-          : '${request.toParent} drops back at $t';
-    } else {
-      return amIToParent
-          ? '${request.fromParent} picks up at $t'
-          : 'You pick up at $t';
+          : '${r.toParent} drops back at $t';
     }
+    return amIToParent
+        ? '${r.fromParent} picks up at $t'
+        : 'You pick up at $t';
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final auth        = ref.watch(authProvider).valueOrNull;
-    final myName      = auth?.userName?.trim() ?? '';
-    final isCreator   = request.createdBy == myId;
-    final isRecipient = request.requestedFrom == myId;
-    final canAct      = isRecipient && request.status == CustodyStatus.pending;
-    // Only window requests (with a return time) have a "completed" state.
-    final canComplete = isCreator &&
-        request.status == CustodyStatus.accepted &&
-        !request.isDayTransfer;
+    final cs        = Theme.of(context).colorScheme;
+    final myId      = ref.watch(authProvider).valueOrNull?.userId ?? '';
+    final myName    = ref.watch(myDisplayNameProvider);
+    final household = ref.watch(householdProvider).valueOrNull;
+    final r         = group.first;
+    final status    = group.status;
 
-    final (statusColor, statusBg) = switch (request.status) {
+    final isCreator   = group.createdBy == myId;
+    final isRecipient = group.requestedFrom == myId;
+    final otherName = household
+            ?.memberByUserId(isCreator ? group.requestedFrom : group.createdBy)
+            ?.displayName ??
+        'The other parent';
+    final isUpcoming = !group.lastDate.isBefore(dateOnly(DateTime.now()));
+
+    final canAct    = isRecipient && status == CustodyStatus.pending;
+    final canEdit   = isCreator && isUpcoming && !group.isSwap &&
+        status == CustodyStatus.pending;
+    final canCancel = isCreator && isUpcoming &&
+        (status == CustodyStatus.pending || status == CustodyStatus.accepted);
+
+    final (statusColor, statusBg) = switch (status) {
       CustodyStatus.accepted  => (Colors.green,  Colors.green.withValues(alpha: 0.15)),
-      CustodyStatus.declined  => (Colors.red,    Colors.red.withValues(alpha: 0.15)),
-      CustodyStatus.completed => (Colors.grey,   Colors.grey.withValues(alpha: 0.15)),
+      CustodyStatus.declined  => (cs.error,      cs.error.withValues(alpha: 0.12)),
+      CustodyStatus.completed => (cs.onSurfaceVariant, cs.onSurfaceVariant.withValues(alpha: 0.12)),
       CustodyStatus.pending   => (Colors.orange, Colors.orange.withValues(alpha: 0.15)),
     };
 
-    final kindLabel = request.isDayTransfer ? 'Day transfer' : 'Handover';
-    final icon      = request.isDayTransfer ? Icons.swap_horiz : Icons.swap_vert;
+    final kindLabel = group.isSwap
+        ? 'Day swap'
+        : r.isDayTransfer ? 'Day handover' : 'Time window';
+    final icon = group.isSwap
+        ? Icons.sync_alt
+        : r.isDayTransfer ? Icons.swap_horiz : Icons.schedule;
+    final kidsLabel =
+        r.childName == 'All' ? 'All children' : r.childName.split(',').join(' & ');
+    final dateLabel = group.isSwap
+        ? group.legs.map((l) => fmtDateShort(l.date)).join('  ⇄  ')
+        : DateFormat('EEE, d MMM').format(r.date);
+
+    final lines = <String>[
+      if (group.isSwap)
+        for (final leg in group.legs)
+          '${leg.toParent == myName ? 'You take' : '${leg.toParent} takes'} '
+              'them ${fmtDateShort(leg.date)}'
+              '${leg.pickupTime == '00:00' ? '' : ' from ${leg.pickupTime}'}'
+      else ...[
+        _pickupLabel(r, myName),
+        if (_returnLabel(r, myName) != null) _returnLabel(r, myName)!,
+      ],
+    ];
 
     return Card(
       child: Padding(
@@ -118,16 +174,13 @@ class CustodyRequestTile extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Header ────────────────────────────────────────────────────
             Row(
               children: [
-                Icon(icon, size: 18,
-                    color: Theme.of(context).colorScheme.primary),
+                Icon(icon, size: 18, color: cs.primary),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    '$kindLabel · ${request.childName} · '
-                    '${DateFormat('EEE, d MMM').format(request.date)}',
+                    '$kindLabel · $kidsLabel',
                     style: const TextStyle(
                         fontWeight: FontWeight.bold, fontSize: 15),
                   ),
@@ -140,83 +193,76 @@ class CustodyRequestTile extends ConsumerWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    request.statusLabel,
+                    r.statusLabel == 'Pending' || status == CustodyStatus.pending
+                        ? 'Pending'
+                        : r.statusLabel,
                     style: TextStyle(
                         color: statusColor,
                         fontWeight: FontWeight.bold,
                         fontSize: 12),
                   ),
                 ),
-                if (isCreator && request.status == CustodyStatus.pending)
-                  PopupMenuButton<_TileAction>(
+                if (canEdit || canCancel)
+                  PopupMenuButton<String>(
                     iconSize: 18,
                     padding: EdgeInsets.zero,
+                    tooltip: 'More',
                     onSelected: (action) async {
-                      if (action == _TileAction.edit) {
+                      if (action == 'edit') {
                         await showAppSheet<void>(context,
-                            builder: (_) =>
-                                CustodyRequestEditSheet(request: request));
+                            builder: (_) => CustodyRequestEditSheet(request: r));
                       } else {
-                        final ok = await confirmDialog(context,
-                            title: 'Delete request?',
-                            body: 'This cannot be undone.',
-                            action: 'Delete',
-                            destructive: true);
-                        if (ok && context.mounted) {
-                          await ref
-                              .read(custodyRequestsProvider.notifier)
-                              .deleteRequest(request.id);
-                        }
+                        await _cancel(context, ref, otherName);
                       }
                     },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(
-                        value: _TileAction.edit,
-                        child: ListTile(
-                          leading: Icon(Icons.edit_outlined),
-                          title: Text('Edit'),
-                          contentPadding: EdgeInsets.zero,
-                          dense: true,
+                    itemBuilder: (_) => [
+                      if (canEdit)
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: ListTile(
+                            leading: Icon(Icons.edit_outlined),
+                            title: Text('Edit'),
+                            contentPadding: EdgeInsets.zero,
+                            dense: true,
+                          ),
                         ),
-                      ),
-                      PopupMenuItem(
-                        value: _TileAction.delete,
-                        child: ListTile(
-                          leading: Icon(Icons.delete_outline, color: Colors.red),
-                          title: Text('Delete',
-                              style: TextStyle(color: Colors.red)),
-                          contentPadding: EdgeInsets.zero,
-                          dense: true,
+                      if (canCancel)
+                        PopupMenuItem(
+                          value: 'cancel',
+                          child: ListTile(
+                            leading: Icon(Icons.event_busy_outlined, color: cs.error),
+                            title: Text(
+                              status == CustodyStatus.pending ? 'Withdraw' : 'Cancel',
+                              style: TextStyle(color: cs.error),
+                            ),
+                            contentPadding: EdgeInsets.zero,
+                            dense: true,
+                          ),
                         ),
-                      ),
                     ],
                   ),
               ],
             ),
-            const SizedBox(height: 4),
-            // ── Transport labels ───────────────────────────────────────────
-            Text(
-              _pickupLabel(myName),
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-            ),
-            if (_returnLabel(myName) != null) ...[
-              const SizedBox(height: 2),
-              Text(
-                _returnLabel(myName)!,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-              ),
-            ],
             const SizedBox(height: 2),
-            Text(
-              '${request.fromParent} → ${request.toParent}',
-              style: const TextStyle(color: Colors.grey, fontSize: 12),
-            ),
-            if (request.note != null) ...[
-              const SizedBox(height: 6),
-              Text('"${request.note}"',
-                  style: TextStyle(color: Colors.grey[700], fontSize: 13)),
+            Text(dateLabel,
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurfaceVariant)),
+            const SizedBox(height: 6),
+            for (final line in lines)
+              Text(line,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+            if (!group.isSwap) ...[
+              const SizedBox(height: 2),
+              Text('${r.fromParent} → ${r.toParent}',
+                  style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
             ],
-            // ── Accept / Decline — recipient of a pending request ──────────
+            if (r.note != null) ...[
+              const SizedBox(height: 6),
+              Text('"${r.note}"',
+                  style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13)),
+            ],
             if (canAct) ...[
               const SizedBox(height: 12),
               Row(
@@ -224,9 +270,9 @@ class CustodyRequestTile extends ConsumerWidget {
                   Expanded(
                     child: OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.red,
-                          side: const BorderSide(color: Colors.red)),
-                      onPressed: () => _decline(context, ref),
+                          foregroundColor: cs.error,
+                          side: BorderSide(color: cs.error)),
+                      onPressed: () => _respond(context, ref, accept: false),
                       icon: const Icon(Icons.close, size: 16),
                       label: const Text('Decline'),
                     ),
@@ -234,28 +280,12 @@ class CustodyRequestTile extends ConsumerWidget {
                   const SizedBox(width: 12),
                   Expanded(
                     child: FilledButton.icon(
-                      onPressed: () => ref
-                          .read(custodyRequestsProvider.notifier)
-                          .respond(request.id, accept: true),
+                      onPressed: () => _respond(context, ref, accept: true),
                       icon: const Icon(Icons.check, size: 16),
-                      label: const Text('Accept'),
+                      label: Text(group.isSwap ? 'Accept swap' : 'Accept'),
                     ),
                   ),
                 ],
-              ),
-            ],
-            // ── Mark complete — creator of an accepted window request ───────
-            if (canComplete) ...[
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () => ref
-                      .read(custodyRequestsProvider.notifier)
-                      .complete(request.id),
-                  icon: const Icon(Icons.done_all, size: 16),
-                  label: const Text('Mark completed (kids returned)'),
-                ),
               ),
             ],
           ],
@@ -264,5 +294,3 @@ class CustodyRequestTile extends ConsumerWidget {
     );
   }
 }
-
-enum _TileAction { edit, delete }

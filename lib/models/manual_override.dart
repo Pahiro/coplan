@@ -15,9 +15,11 @@ class ManualOverride {
   final String? adhocActivity;
   final String? adhocLocation;
 
-  /// When true this one-off event is a shared obligation visible to both parents
-  /// (e.g. birthday party, school trip).
+  /// When true both parents attend this one-off event.
   final bool isShared;
+
+  /// '' for an ordinary one-off event, 'exam' for a school exam.
+  final String kind;
 
   const ManualOverride({
     required this.id,
@@ -34,21 +36,22 @@ class ManualOverride {
     this.adhocActivity,
     this.adhocLocation,
     this.isShared = false,
+    this.kind = '',
   });
+
+  bool get isExam => kind == 'exam';
 
   factory ManualOverride.fromRecord(Map<String, dynamic> j) {
     final reason        = j['reason'] as String? ?? '';
     final activityField = j['activity'] as String? ?? '';
 
-    // PocketBase may silently drop unknown fields (like `is_adhoc`) if they
-    // aren't in the collection schema.  Fall back to a reliable signal:
-    // createSharedEvent() always writes a non-empty `reason` field, while
-    // non-adhoc parent-substitution overrides do not go through any create
-    // path in this codebase and therefore have no meaningful reason text.
+    // Older records may lack `is_adhoc`. Fall back to a reliable signal:
+    // one-off event creation always writes a non-empty `reason`, while
+    // parent-substitution overrides have no meaningful reason text.
     final isAdhocFlag = (j['is_adhoc'] as bool?) ?? reason.isNotEmpty;
 
-    // Prefer the dedicated `activity` field; fall back to `reason` which
-    // createSharedEvent() always mirrors the activity name into.
+    // Prefer the dedicated `activity` field; fall back to `reason`, which
+    // one-off event creation mirrors the activity name into.
     final effectiveActivity = activityField.isNotEmpty ? activityField : reason;
 
     return ManualOverride(
@@ -57,7 +60,7 @@ class ManualOverride {
       childName:      j['child_name'] as String,
       originalParent: j['original_parent'] as String?,
       assignedParent: j['assigned_parent'] as String,
-      overrideTime:   j['override_time'] as String?,
+      overrideTime:   _nonEmpty(j['override_time'] as String?),
       endTime:        j['end_time'] as String?,
       reason:         reason,
       note:           j['note'] as String?,
@@ -66,6 +69,9 @@ class ManualOverride {
       adhocActivity:  effectiveActivity.isNotEmpty ? effectiveActivity : null,
       adhocLocation:  j['location'] as String?,
       isShared:       (j['is_shared'] as bool?) ?? false,
+      kind:           j['kind'] as String? ?? '',
     );
   }
+
+  static String? _nonEmpty(String? s) => (s == null || s.isEmpty) ? null : s;
 }

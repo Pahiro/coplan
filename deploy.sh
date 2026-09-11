@@ -97,7 +97,8 @@ if [ "$SKIP_BACKEND" = false ]; then
     ok "Migrations copied"
 
     info "Copying hooks..."
-    scp "$SCRIPT_DIR/backend/pb_hooks/main.pb.js" "$SERVER:$PB_DIR/pb_hooks/main.pb.js"
+    # main.pb.js plus the helper modules it require()s (coplan_utils.js).
+    scp "$SCRIPT_DIR"/backend/pb_hooks/*.js "$SERVER:$PB_DIR/pb_hooks/"
     ok "Hooks copied"
 
     info "Starting PocketBase and verifying..."

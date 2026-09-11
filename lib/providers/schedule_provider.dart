@@ -2,21 +2,33 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/pb_client.dart';
 import '../engine/engine_factory.dart';
+import '../engine/resolution_engine.dart';
 import '../models/base_rule.dart';
 import '../models/custody_request.dart';
 import '../models/manual_override.dart';
-import '../models/recurring_arrangement.dart';
 import '../models/resolved_event.dart';
-import '../models/weekday_rule.dart';
 import '../services/offline_cache.dart';
+import '../services/queue_service.dart';
+import '../services/widget_cache_service.dart';
 import '../utils/dates.dart';
+import '../utils/ids.dart';
 import 'absence_provider.dart';
+import 'auth_provider.dart';
 import 'holiday_provider.dart';
 import 'household_provider.dart';
+import 'queue_count_provider.dart';
 
-// ── Static data — fetched once, rarely changes ───────────────────────────────
+// ── Clock ─────────────────────────────────────────────────────────────────────
 
-final baseRulesProvider = FutureProvider<List<BaseRule>>((ref) async {
+/// Today's date at midnight. Date-sensitive providers watch this; the app
+/// shell advances it when the day rolls over or the app resumes on a new day,
+/// so "Today" never goes stale while the app stays open.
+final todayProvider =
+    StateProvider<DateTime>((ref) => dateOnly(DateTime.now()));
+
+// ── Source data ───────────────────────────────────────────────────────────────
+
+final baseRulesProvider = FutureProvider<List<BaseRule>>((ref) {
   return fetchCachedList(
     collection: 'rules_base',
     fetch: () => pb.collection('rules_base').getFullList(),
@@ -24,29 +36,10 @@ final baseRulesProvider = FutureProvider<List<BaseRule>>((ref) async {
   );
 });
 
-final weekdayRulesProvider = FutureProvider<List<WeekdayRule>>((ref) async {
-  return fetchCachedList(
-    collection: 'custody_weekday_rules',
-    fetch: () =>
-        pb.collection('custody_weekday_rules').getFullList(filter: 'active = true'),
-    parse: WeekdayRule.fromRecord,
-  );
-});
-
-final recurringArrangementsProvider =
-    FutureProvider<List<RecurringArrangement>>((ref) async {
-  return fetchCachedList(
-    collection: 'custody_recurring',
-    fetch: () =>
-        pb.collection('custody_recurring').getFullList(filter: 'active = true'),
-    parse: RecurringArrangement.fromRecord,
-  );
-});
-
-/// All manual overrides for the household (the engine filters by date itself).
-/// Fetched as a full list rather than per-day so cached data covers any date
+/// All manual overrides and one-off events for the household (the engine
+/// filters by date). Fetched as a full list so cached data covers any date
 /// while the server is unreachable.
-final manualOverridesProvider = FutureProvider<List<ManualOverride>>((ref) async {
+final manualOverridesProvider = FutureProvider<List<ManualOverride>>((ref) {
   return fetchCachedList(
     collection: 'manual_overrides',
     fetch: () => pb.collection('manual_overrides').getFullList(),
@@ -54,10 +47,9 @@ final manualOverridesProvider = FutureProvider<List<ManualOverride>>((ref) async
   );
 });
 
-/// All accepted custody requests in the household (engine filters by date and
-/// re-checks acceptance). Distinct from `custodyRequestsProvider`, which is
-/// scoped to the current user's own requests for the requests screen.
-final acceptedCustodyProvider = FutureProvider<List<CustodyRequest>>((ref) async {
+/// All accepted custody requests in the household. Distinct from
+/// `custodyRequestsProvider`, which holds the current user's own requests.
+final acceptedCustodyProvider = FutureProvider<List<CustodyRequest>>((ref) {
   return fetchCachedList(
     collection: 'custody_requests_accepted',
     fetch: () => pb
@@ -67,112 +59,101 @@ final acceptedCustodyProvider = FutureProvider<List<CustodyRequest>>((ref) async
   );
 });
 
-// ── Resolved schedule for a single day ──────────────────────────────────────
+// ── Resolved schedule ─────────────────────────────────────────────────────────
 
+/// An engine over everything currently loaded (empty lists while loading), for
+/// synchronous UI such as calendar cells and form hints.
+final scheduleEngineProvider = Provider<ResolutionEngine>((ref) {
+  return buildEngine(
+    household:       ref.watch(householdProvider).valueOrNull,
+    baseRules:       ref.watch(baseRulesProvider).valueOrNull ?? const [],
+    overrides:       ref.watch(manualOverridesProvider).valueOrNull ?? const [],
+    custodyRequests: ref.watch(acceptedCustodyProvider).valueOrNull ?? const [],
+    absencePeriods:  ref.watch(absencePeriodsProvider).valueOrNull ?? const [],
+    holidayBlocks:   ref.watch(holidayBlocksProvider).valueOrNull ?? const [],
+  );
+});
+
+/// Resolved events for one day. Key by a date-only [DateTime].
 final resolvedDayProvider =
     FutureProvider.family<List<ResolvedEvent>, DateTime>((ref, rawDate) async {
-  final date = DateTime(rawDate.year, rawDate.month, rawDate.day);
-
-  final rules           = await ref.watch(baseRulesProvider.future);
-  final weekdayRules    = await ref.watch(weekdayRulesProvider.future);
-  final recurring       = await ref.watch(recurringArrangementsProvider.future);
-  final overrides       = await ref.watch(manualOverridesProvider.future);
-  final custodyRequests = await ref.watch(acceptedCustodyProvider.future);
-
-  final allAbsences = await ref.watch(absencePeriodsProvider.future);
-  final allHolidays = await ref.watch(holidayBlocksProvider.future);
+  final date      = dateOnly(rawDate);
+  final rules     = await ref.watch(baseRulesProvider.future);
+  final overrides = await ref.watch(manualOverridesProvider.future);
+  final custody   = await ref.watch(acceptedCustodyProvider.future);
+  final absences  = await ref.watch(absencePeriodsProvider.future);
+  final holidays  = await ref.watch(holidayBlocksProvider.future);
 
   return buildEngine(
-    household:             ref.watch(householdProvider).valueOrNull,
-    baseRules:             rules,
-    overrides:             overrides,
-    custodyRequests:       custodyRequests,
-    weekdayRules:          weekdayRules,
-    recurringArrangements: recurring,
-    absencePeriods:        allAbsences.where((a) => a.coversDate(date)).toList(),
-    holidayBlocks:         allHolidays.where((b) => b.coversDate(date)).toList(),
+    household:       ref.watch(householdProvider).valueOrNull,
+    baseRules:       rules,
+    overrides:       overrides,
+    custodyRequests: custody,
+    absencePeriods:  absences.where((a) => a.coversDate(date)).toList(),
+    holidayBlocks:   holidays.where((b) => b.coversDate(date)).toList(),
   ).resolveDay(date);
 });
 
-// ── Dashboard: today + tomorrow combined ─────────────────────────────────────
-
+/// Today + tomorrow, for the dashboard.
 final dashboardProvider = FutureProvider<List<ResolvedEvent>>((ref) async {
-  final today    = DateTime.now();
-  final tomorrow = today.add(const Duration(days: 1));
-
+  final today = ref.watch(todayProvider);
   final results = await Future.wait([
     ref.watch(resolvedDayProvider(today).future),
-    ref.watch(resolvedDayProvider(tomorrow).future),
+    ref.watch(resolvedDayProvider(addDays(today, 1)).future),
   ]);
   return [...results[0], ...results[1]];
 });
-
-// ── Day owner (dashboard headers, etc.) ──────────────────────────────────────
 
 /// Who has the kids on a given day, or null while inputs are loading or in
 /// shared mode (where ownership is "Both" and not worth labelling).
 final dayOwnerProvider = Provider.family<String?, DateTime>((ref, rawDate) {
   final household = ref.watch(householdProvider).valueOrNull;
   if (household == null || household.mode == 'shared') return null;
+  final custody = ref.watch(acceptedCustodyProvider).valueOrNull;
+  if (custody == null) return null;
 
-  final date         = DateTime(rawDate.year, rawDate.month, rawDate.day);
-  final weekdayRules = ref.watch(weekdayRulesProvider).valueOrNull;
-  if (weekdayRules == null) return null;
-  final recurring = ref.watch(recurringArrangementsProvider).valueOrNull ?? const [];
-  final absences  = ref.watch(absencePeriodsProvider).valueOrNull ?? const [];
-  final holidays  = ref.watch(holidayBlocksProvider).valueOrNull ?? const [];
-
+  final date     = dateOnly(rawDate);
+  final absences = ref.watch(absencePeriodsProvider).valueOrNull ?? const [];
+  final holidays = ref.watch(holidayBlocksProvider).valueOrNull ?? const [];
   return buildEngine(
-    household:             household,
-    weekdayRules:          weekdayRules,
-    recurringArrangements: recurring,
-    absencePeriods:        absences.where((a) => a.coversDate(date)).toList(),
-    holidayBlocks:         holidays.where((b) => b.coversDate(date)).toList(),
+    household:       household,
+    custodyRequests: custody,
+    absencePeriods:  absences.where((a) => a.coversDate(date)).toList(),
+    holidayBlocks:   holidays.where((b) => b.coversDate(date)).toList(),
   ).dayOwner(date);
 });
 
-// ── Full week of events (for calendar screen) ────────────────────────────────
-
+/// A full week of events keyed by ISO date, for the calendar.
 final weekEventsProvider =
     FutureProvider.family<Map<String, List<ResolvedEvent>>, DateTime>(
         (ref, rawMonday) async {
-  final monday       = DateTime(rawMonday.year, rawMonday.month, rawMonday.day);
-  final rules        = await ref.watch(baseRulesProvider.future);
-  final weekdayRules = await ref.watch(weekdayRulesProvider.future);
-  final recurring    = await ref.watch(recurringArrangementsProvider.future);
+  final monday    = dateOnly(rawMonday);
+  final rules     = await ref.watch(baseRulesProvider.future);
+  final overrides = await ref.watch(manualOverridesProvider.future);
+  final custody   = await ref.watch(acceptedCustodyProvider.future);
+  final absences  = await ref.watch(absencePeriodsProvider.future);
+  final holidays  = await ref.watch(holidayBlocksProvider.future);
 
-  final allOverrides = await ref.watch(manualOverridesProvider.future);
-  final allCustody   = await ref.watch(acceptedCustodyProvider.future);
-
-  final allAbsences = await ref.watch(absencePeriodsProvider.future);
-  final allHolidays = await ref.watch(holidayBlocksProvider.future);
-
-  // One engine for the whole week — the engine filters overrides/custody/
-  // absences by date internally, so per-day re-construction is wasted work.
+  // One engine for the whole week — it filters by date internally.
   final engine = buildEngine(
-    household:             ref.watch(householdProvider).valueOrNull,
-    baseRules:             rules,
-    overrides:             allOverrides,
-    custodyRequests:       allCustody,
-    weekdayRules:          weekdayRules,
-    recurringArrangements: recurring,
-    absencePeriods:        allAbsences,
-    holidayBlocks:         allHolidays,
+    household:       ref.watch(householdProvider).valueOrNull,
+    baseRules:       rules,
+    overrides:       overrides,
+    custodyRequests: custody,
+    absencePeriods:  absences,
+    holidayBlocks:   holidays,
   );
 
-  final result = <String, List<ResolvedEvent>>{};
-  for (int i = 0; i < 7; i++) {
-    final date = monday.add(Duration(days: i));
-    result[isoDate(date)] = engine.resolveDay(date);
-  }
-  return result;
+  return {
+    for (var i = 0; i < 7; i++)
+      isoDate(addDays(monday, i)): engine.resolveDay(addDays(monday, i)),
+  };
 });
 
-// ── Base rules mutations ──────────────────────────────────────────────────────
+// ── Mutations ─────────────────────────────────────────────────────────────────
 
 /// The active household id, or throws with a clear message. Every create MUST
-/// stamp `household` — the hardened access rules deny unstamped records with
-/// an opaque 400 otherwise.
+/// stamp `household` — the access rules deny unstamped records.
 String _requireHouseholdId(Ref ref) {
   final hid = ref.read(householdProvider).valueOrNull?.id;
   if (hid == null) {
@@ -206,7 +187,7 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
       'end_date':      endDate ?? '',
       'household':     _requireHouseholdId(ref),
     });
-    _invalidate();
+    _changed();
   }
 
   Future<void> updateRule(
@@ -230,30 +211,103 @@ class BaseRulesNotifier extends AsyncNotifier<void> {
       'handover_from': handoverFrom ?? '',
       'end_date':      endDate ?? '',
     });
-    _invalidate();
+    _changed();
   }
 
   Future<void> delete(String id) async {
     await pb.collection('rules_base').delete(id);
-    _invalidate();
+    _changed();
   }
 
-  void _invalidate() {
+  void _changed() {
     ref.invalidate(baseRulesProvider);
-    ref.invalidate(dashboardProvider);
-    ref.invalidate(weekEventsProvider);
-    ref.invalidate(resolvedDayProvider);
+    WidgetCacheService.updateSoon();
   }
 }
 
 final baseRulesNotifierProvider =
     AsyncNotifierProvider<BaseRulesNotifier, void>(BaseRulesNotifier.new);
 
-// ── Manual override mutations ─────────────────────────────────────────────────
+/// A one-off event (or exam paper) to create.
+class NewEvent {
+  final DateTime date;
+  final String time;       // "HH:mm"
+  final String? endTime;   // "HH:mm"
+  final String activity;
+  final String location;
+  final String childName;
+  final String? note;
+  final bool isShared;
+  final String kind;       // '' | 'exam'
+
+  const NewEvent({
+    required this.date,
+    required this.time,
+    this.endTime,
+    required this.activity,
+    this.location = '',
+    required this.childName,
+    this.note,
+    this.isShared = true,
+    this.kind = '',
+  });
+}
 
 class ManualOverridesNotifier extends AsyncNotifier<void> {
   @override
   Future<void> build() async {}
+
+  /// Creates one-off events — a single outing, or a child's whole exam
+  /// timetable. Each record carries a client-generated id, so whatever can't
+  /// reach the server is queued and replayed safely later.
+  Future<void> createEvents(List<NewEvent> events) async {
+    final hid    = _requireHouseholdId(ref);
+    final myId   = ref.read(authProvider).valueOrNull?.userId ?? '';
+    final engine = ref.read(scheduleEngineProvider);
+
+    final bodies = [
+      for (final e in events)
+        {
+          'id':              newRecordId(),
+          'target_date':     isoDate(e.date),
+          'child_name':      e.childName,
+          // Kept for older app versions; the engine resolves the parent live.
+          'original_parent': engine.dayOwner(e.date),
+          'assigned_parent': engine.dayOwner(e.date),
+          'override_time':   e.time,
+          'reason':          e.activity,
+          'created_by':      myId,
+          'is_adhoc':        true,
+          'is_shared':       e.isShared,
+          'activity':        e.activity,
+          'location':        e.location,
+          'end_time':        e.endTime ?? '',
+          'note':            e.note ?? '',
+          'kind':            e.kind,
+          'household':       hid,
+        },
+    ];
+
+    for (var i = 0; i < bodies.length; i++) {
+      try {
+        await pb.collection('manual_overrides').create(body: bodies[i]);
+      } catch (e) {
+        if (!isNetworkError(e)) rethrow;
+        for (final body in bodies.sublist(i)) {
+          await QueueService.enqueue(PendingOp(
+            id:         QueueService.newOpId(),
+            collection: 'manual_overrides',
+            method:     'create',
+            body:       body,
+          ));
+        }
+        ref.read(pendingOpsCountProvider.notifier).state =
+            await QueueService.pendingCount();
+        break;
+      }
+    }
+    _changed();
+  }
 
   Future<void> updateOverride(
     String id, {
@@ -270,165 +324,31 @@ class ManualOverridesNotifier extends AsyncNotifier<void> {
       'child_name':    childName,
       'target_date':   targetDate,
       'override_time': overrideTime ?? '',
+      'reason':        activity,
       'activity':      activity,
       'location':      location,
       'is_shared':     isShared,
       'end_time':      endTime ?? '',
       'note':          note ?? '',
     });
-    _invalidate();
+    _changed();
   }
 
   Future<void> delete(String id) async {
     await pb.collection('manual_overrides').delete(id);
-    _invalidate();
+    _changed();
   }
 
-  void _invalidate() {
+  void _changed() {
     ref.invalidate(manualOverridesProvider);
-    ref.invalidate(dashboardProvider);
-    ref.invalidate(weekEventsProvider);
-    ref.invalidate(resolvedDayProvider);
+    WidgetCacheService.updateSoon();
   }
 }
 
 final manualOverridesNotifierProvider =
     AsyncNotifierProvider<ManualOverridesNotifier, void>(ManualOverridesNotifier.new);
 
-// ── Weekday rules mutations ───────────────────────────────────────────────────
-
-class WeekdayRulesNotifier extends AsyncNotifier<void> {
-  @override
-  Future<void> build() async {}
-
-  /// Creates a standing weekday rule, replacing any existing rule for that day.
-  Future<void> create({
-    required int dayOfWeek,
-    required String assignedParent,
-    required String reason,
-    String? endDate,
-  }) async {
-    try {
-      final existing = await pb
-          .collection('custody_weekday_rules')
-          .getFullList(filter: 'day_of_week = $dayOfWeek');
-      for (final r in existing) {
-        await pb.collection('custody_weekday_rules').delete(r.id);
-      }
-    } catch (_) {}
-
-    await pb.collection('custody_weekday_rules').create(body: {
-      'day_of_week':     dayOfWeek,
-      'assigned_parent': assignedParent,
-      'reason':          reason,
-      'active':          true,
-      'end_date':        endDate ?? '',
-      'household':       _requireHouseholdId(ref),
-    });
-    _invalidate();
-  }
-
-  Future<void> delete(String id) async {
-    await pb.collection('custody_weekday_rules').delete(id);
-    _invalidate();
-  }
-
-  void _invalidate() {
-    ref.invalidate(weekdayRulesProvider);
-    ref.invalidate(dashboardProvider);
-    ref.invalidate(weekEventsProvider);
-    ref.invalidate(resolvedDayProvider);
-  }
-}
-
-final weekdayRulesNotifierProvider =
-    AsyncNotifierProvider<WeekdayRulesNotifier, void>(WeekdayRulesNotifier.new);
-
-// ── Recurring arrangement mutations ───────────────────────────────────────────
-
-class RecurringArrangementsNotifier extends AsyncNotifier<void> {
-  @override
-  Future<void> build() async {}
-
-  /// Creates a standing recurring arrangement, replacing any existing one for
-  /// the same weekday + recipient so there's a single rule per pattern.
-  Future<void> upsert({
-    required int dayOfWeek,
-    required String toParent,
-    required String childName,
-    required String pickupTime,
-    String? returnTime,
-    bool returnTimeTbd = false,
-    bool toParentCollects = true,
-    bool toParentReturns = false,
-    required String startDate,
-    String? endDate,
-    String? note,
-  }) async {
-    try {
-      final existing = await pb
-          .collection('custody_recurring')
-          .getFullList(filter: 'day_of_week = $dayOfWeek && to_parent = "$toParent"');
-      for (final r in existing) {
-        await pb.collection('custody_recurring').delete(r.id);
-      }
-    } catch (_) {}
-
-    await pb.collection('custody_recurring').create(body: {
-      'day_of_week':        dayOfWeek,
-      'to_parent':          toParent,
-      'child_name':         childName,
-      'pickup_time':        pickupTime,
-      'return_time':        returnTime ?? '',
-      'return_time_tbd':    returnTimeTbd,
-      'to_parent_collects': toParentCollects,
-      'to_parent_returns':  toParentReturns,
-      'start_date':         startDate,
-      'end_date':           endDate ?? '',
-      'note':               note ?? '',
-      'active':             true,
-      'created_by':         pb.authStore.record?.id ?? '',
-      'household':          _requireHouseholdId(ref),
-    });
-    _invalidate();
-  }
-
-  Future<void> delete(String id) async {
-    await pb.collection('custody_recurring').delete(id);
-    _invalidate();
-  }
-
-  /// Removes arrangements for a given weekday, optionally scoped to a specific
-  /// recipient [toParent]. Without [toParent] all arrangements on that weekday
-  /// are deleted (current two-parent behaviour).
-  Future<void> deleteForDay(int dayOfWeek, {String? toParent}) async {
-    try {
-      var filter = 'day_of_week = $dayOfWeek';
-      if (toParent != null) filter += ' && to_parent = "$toParent"';
-      final existing = await pb
-          .collection('custody_recurring')
-          .getFullList(filter: filter);
-      for (final r in existing) {
-        await pb.collection('custody_recurring').delete(r.id);
-      }
-    } catch (_) {}
-    _invalidate();
-  }
-
-  void _invalidate() {
-    ref.invalidate(recurringArrangementsProvider);
-    ref.invalidate(dashboardProvider);
-    ref.invalidate(weekEventsProvider);
-    ref.invalidate(resolvedDayProvider);
-  }
-}
-
-final recurringArrangementsNotifierProvider =
-    AsyncNotifierProvider<RecurringArrangementsNotifier, void>(
-        RecurringArrangementsNotifier.new);
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 DateTime weekMonday(DateTime date) =>
-    DateTime(date.year, date.month, date.day)
-        .subtract(Duration(days: date.weekday - 1));
+    addDays(dateOnly(date), -(date.weekday - 1));

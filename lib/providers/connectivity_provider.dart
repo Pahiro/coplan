@@ -3,15 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/pb_client.dart';
 import '../services/queue_service.dart';
-import 'custody_provider.dart';
 import 'queue_count_provider.dart';
-import 'schedule_provider.dart';
+import 'refresh.dart';
 
 export 'queue_count_provider.dart' show pendingOpsCountProvider;
 
 /// Watch this provider at the root shell to keep the watcher alive.
 /// Flushes queued ops automatically when connectivity is restored and
-/// invalidates schedule + request caches so the UI reflects the synced state.
+/// re-fetches app data so the UI reflects the synced state.
 final connectivityWatcherProvider = Provider<void>((ref) {
   bool? lastOnline;
 
@@ -19,11 +18,8 @@ final connectivityWatcherProvider = Provider<void>((ref) {
     final isOnline = results.any((r) => r != ConnectivityResult.none);
 
     if (lastOnline == false && isOnline) {
-      final flushed = await QueueService.flush(pb);
-      if (flushed > 0) {
-        ref.invalidate(custodyRequestsProvider);
-        ref.invalidate(dashboardProvider);
-      }
+      await QueueService.flush(pb);
+      refreshAppData(ref.invalidate);
     }
 
     lastOnline = isOnline;

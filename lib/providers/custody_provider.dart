@@ -1,28 +1,32 @@
-import 'package:collection/collection.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../core/constants.dart';
 import '../core/pb_client.dart';
 import '../models/custody_request.dart';
 import '../services/offline_cache.dart';
 import '../services/queue_service.dart';
 import '../services/widget_cache_service.dart';
+import '../utils/ids.dart';
 import 'auth_provider.dart';
 import 'household_provider.dart';
 import 'queue_count_provider.dart';
 import 'schedule_provider.dart';
 
-// ── Badge count ───────────────────────────────────────────────────────────────
+// ── Derived ───────────────────────────────────────────────────────────────────
 
-/// Pending requests directed at the current user — drives the notification bell.
-final pendingCustodyCountProvider = Provider<int>((ref) {
+/// Pending requests waiting for the current user's answer, soonest first.
+/// A day swap counts once.
+final pendingForMeProvider = Provider<List<RequestGroup>>((ref) {
   final myId     = ref.watch(authProvider).valueOrNull?.userId ?? '';
   final requests = ref.watch(custodyRequestsProvider).valueOrNull ?? const [];
-  return requests
-      .where((r) =>
-          r.requestedFrom == myId && r.status == CustodyStatus.pending)
-      .length;
+  return groupRequests(requests)
+      .where((g) => g.requestedFrom == myId && g.status == CustodyStatus.pending)
+      .toList()
+    ..sort((a, b) => a.firstDate.compareTo(b.firstDate));
 });
+
+/// Drives the notification bell badge.
+final pendingCustodyCountProvider =
+    Provider<int>((ref) => ref.watch(pendingForMeProvider).length);
 
 // ── Read ──────────────────────────────────────────────────────────────────────
 
@@ -31,13 +35,12 @@ final custodyRequestsProvider =
   CustodyRequestsNotifier.new,
 );
 
-class CustodyRequestsNotifier
-    extends AsyncNotifier<List<CustodyRequest>> {
+/// The current user's requests (made by or addressed to them), plus all
+/// custody writes.
+class CustodyRequestsNotifier extends AsyncNotifier<List<CustodyRequest>> {
   @override
-  Future<List<CustodyRequest>> build() => _fetch();
-
-  Future<List<CustodyRequest>> _fetch() {
-    final userId = pb.authStore.record?.id ?? '';
+  Future<List<CustodyRequest>> build() {
+    final userId = ref.watch(authProvider).valueOrNull?.userId ?? '';
     return fetchCachedList(
       collection: 'custody_requests_mine',
       fetch: () => pb.collection('custody_requests').getFullList(
@@ -48,18 +51,14 @@ class CustodyRequestsNotifier
     );
   }
 
-  // ── Write: custody request ─────────────────────────────────────────────────
+  // ── Create ──────────────────────────────────────────────────────────────────
 
-  /// Creates a custody request. Set [iAmTaking] to true when the current user
-  /// will receive the kids, false when asking the other parent to take them.
+  /// A one-way day handover or time window with the co-parent. Set [iAmTaking]
+  /// when the current user receives the kids.
   ///
-  /// Omit [returnTime] and leave [returnTimeTbd] false for a day transfer
-  /// (no return expected — kids stay overnight). Set [returnTimeTbd] for a
-  /// window where the return time is yet to be confirmed.
-  /// When [recipientUserId] and [recipientName] are supplied, the request is
-  /// directed at that specific member (e.g. a helper) instead of the co-parent:
-  /// the current user hands the kids to them. Helper requests are always
-  /// one-off (repeatWeekly is ignored).
+  /// Omit [returnTime] and leave [returnTimeTbd] false for a day transfer.
+  /// When [recipientUserId] and [recipientName] are supplied, the current user
+  /// hands the kids to that member (e.g. a helper) instead.
   Future<void> createRequest({
     required bool iAmTaking,
     required String date,
@@ -68,88 +67,80 @@ class CustodyRequestsNotifier
     String? returnTime,
     bool returnTimeTbd = false,
     String? note,
-    bool repeatWeekly = false,
-    String? repeatReason,
-    String? repeatEndDate,
     bool toParentCollects = true,
     bool toParentReturns  = false,
     String? recipientUserId,
     String? recipientName,
   }) async {
-    final auth      = ref.read(authProvider).valueOrNull;
-    final myId      = auth?.userId ?? '';
-    final myName    = auth?.userName?.trim() ?? 'Parent';
-    final household = await ref.read(householdProvider.future);
-    final householdId = household?.id;
-    if (householdId == null) throw Exception('No active household — cannot create custody request');
-
-    final bool isHelperRequest =
-        recipientUserId != null && recipientName != null;
+    final p = _party();
 
     final String fromParent, toParent, requestedFrom;
-    if (isHelperRequest) {
-      // Current user hands the kids to the named recipient (helper).
-      fromParent    = myName;
+    if (recipientUserId != null && recipientName != null) {
+      fromParent    = p.myName;
       toParent      = recipientName;
       requestedFrom = recipientUserId;
     } else {
-      final otherName = _otherParentName(myName);
-      fromParent    = iAmTaking ? otherName : myName;
-      toParent      = iAmTaking ? myName    : otherName;
-      requestedFrom = await otherParentId();
+      final other   = p.requireCoParent();
+      fromParent    = iAmTaking ? other.name : p.myName;
+      toParent      = iAmTaking ? p.myName   : other.name;
+      requestedFrom = other.userId;
     }
 
-    final body = {
-      'from_parent':       fromParent,
-      'to_parent':         toParent,
-      'date':              date,
-      'child_name':        childName,
-      'pickup_time':       pickupTime,
-      'return_time':       returnTime ?? '',
-      'return_time_tbd':   returnTimeTbd,
-      'status':            'pending',
-      'note':              note ?? '',
-      'created_by':        myId,
-      'requested_from':    requestedFrom,
-      'to_parent_collects': toParentCollects,
-      'to_parent_returns':  toParentReturns,
-      'household': householdId,
-    };
-
-    try {
-      await pb.collection('custody_requests').create(body: body);
-    } catch (e) {
-      if (!isNetworkError(e)) rethrow;
-      await QueueService.enqueue(PendingOp(
-        id:         QueueService.newOpId(),
-        collection: 'custody_requests',
-        method:     'create',
-        body:       body,
-      ));
-      _updateCount();
-      return;
-    }
-    ref.invalidateSelf();
-    ref.invalidate(acceptedCustodyProvider);
-    ref.invalidate(dashboardProvider);
-
-    // Recurring is parent-only; helper pickups are always one-off.
-    if (repeatWeekly && !isHelperRequest) {
-      final date_ = DateTime.parse(date);
-      final reason = (repeatReason?.isNotEmpty ?? false)
-          ? repeatReason!
-          : '${iAmTaking ? "Weekly pickup" : "Weekly transfer"} by $myName';
-      await ref.read(weekdayRulesNotifierProvider.notifier).create(
-            dayOfWeek:      date_.weekday,
-            assignedParent: toParent,
-            reason:         reason,
-            endDate:        repeatEndDate,
-          );
-    }
+    await _createAll([
+      {
+        ..._base(p, requestedFrom, note),
+        'from_parent':        fromParent,
+        'to_parent':          toParent,
+        'date':               date,
+        'child_name':         childName,
+        'pickup_time':        pickupTime,
+        'return_time':        returnTime ?? '',
+        'return_time_tbd':    returnTimeTbd,
+        'to_parent_collects': toParentCollects,
+        'to_parent_returns':  toParentReturns,
+      },
+    ]);
   }
 
-  // ── Write: edit / delete ──────────────────────────────────────────────────
+  /// A day swap with the co-parent: they take the kids on [giveDate] (a day
+  /// the current user has them) and the current user takes them on
+  /// [takeDate]. Stored as two linked day transfers that are answered
+  /// together. Pickup times default to the whole day.
+  Future<void> createSwap({
+    required String giveDate,
+    required String takeDate,
+    required String childName,
+    String givePickup = '00:00',
+    String takePickup = '00:00',
+    String? note,
+  }) async {
+    final p     = _party();
+    final other = p.requireCoParent();
+    final group = newRecordId();
 
+    Map<String, dynamic> leg(String from, String to, String date, String pickup) => {
+          ..._base(p, other.userId, note),
+          'from_parent':        from,
+          'to_parent':          to,
+          'date':               date,
+          'child_name':         childName,
+          'pickup_time':        pickup,
+          'return_time':        '',
+          'return_time_tbd':    false,
+          'to_parent_collects': true,
+          'to_parent_returns':  false,
+          'swap_group':         group,
+        };
+
+    await _createAll([
+      leg(p.myName, other.name, giveDate, givePickup),
+      leg(other.name, p.myName, takeDate, takePickup),
+    ]);
+  }
+
+  // ── Edit / delete ───────────────────────────────────────────────────────────
+
+  /// Edits a pending request (the server refuses edits once it's answered).
   Future<void> updateRequest(
     String id, {
     required String date,
@@ -161,213 +152,189 @@ class CustodyRequestsNotifier
     bool toParentCollects = true,
     bool toParentReturns  = false,
   }) async {
-    final body = {
-      'date':              date,
-      'child_name':        childName,
-      'pickup_time':       pickupTime,
-      'return_time':       returnTime ?? '',
-      'return_time_tbd':   returnTimeTbd,
-      'note':              note ?? '',
+    await _updateAll([id], {
+      'date':               date,
+      'child_name':         childName,
+      'pickup_time':        pickupTime,
+      'return_time':        returnTime ?? '',
+      'return_time_tbd':    returnTimeTbd,
+      'note':               note ?? '',
       'to_parent_collects': toParentCollects,
       'to_parent_returns':  toParentReturns,
-    };
-    try {
-      await pb.collection('custody_requests').update(id, body: body);
-    } catch (e) {
-      if (!isNetworkError(e)) rethrow;
-      await QueueService.enqueue(PendingOp(
-        id:         QueueService.newOpId(),
-        collection: 'custody_requests',
-        method:     'update',
-        body:       body,
-        recordId:   id,
-      ));
-      _updateCount();
-      return;
-    }
-    ref.invalidateSelf();
-    ref.invalidate(acceptedCustodyProvider);
-    ref.invalidate(dashboardProvider);
+    });
   }
 
-  Future<void> deleteRequest(String id) async {
-    await pb.collection('custody_requests').delete(id);
-    ref.invalidateSelf();
-    ref.invalidate(acceptedCustodyProvider);
-    ref.invalidate(dashboardProvider);
+  /// Withdraws a pending request or cancels an agreement (both legs of a
+  /// swap). Only the requester may do this; the other parent is notified.
+  Future<void> deleteGroup(RequestGroup group) async {
+    for (final leg in group.legs) {
+      await pb.collection('custody_requests').delete(leg.id);
+    }
+    _changed();
   }
 
-  // ── Write: respond / complete ──────────────────────────────────────────────
-
-  /// Accept or decline a request. An optional [note] (e.g. a decline reason)
-  /// is appended to the request's note so the requester sees the context.
-  Future<void> respond(String id, {required bool accept, String? note}) async {
-    final body = <String, dynamic>{'status': accept ? 'accepted' : 'declined'};
-    if (note != null && note.trim().isNotEmpty) {
-      final existing = state.valueOrNull
-          ?.firstWhereOrNull((r) => r.id == id)?.note;
-      final prefix = accept ? 'Accepted' : 'Declined';
-      body['note'] = [
-        if (existing != null && existing.isNotEmpty) existing,
-        '$prefix: ${note.trim()}',
-      ].join('\n');
-    }
-    try {
-      await pb.collection('custody_requests').update(id, body: body);
-    } catch (e) {
-      if (!isNetworkError(e)) rethrow;
-      await QueueService.enqueue(PendingOp(
-        id:         QueueService.newOpId(),
-        collection: 'custody_requests',
-        method:     'update',
-        body:       body,
-        recordId:   id,
-      ));
-      _updateCount();
-      return;
-    }
-    ref.invalidateSelf();
-    ref.invalidate(acceptedCustodyProvider);
-    ref.invalidate(dashboardProvider);
+  /// Finds the full group (both swap legs) for a request id.
+  RequestGroup? groupFor(String requestId, {List<CustodyRequest> extra = const []}) {
+    final all = [...?state.valueOrNull, ...extra];
+    final r = all.where((x) => x.id == requestId).firstOrNull;
+    if (r == null) return null;
+    if (r.swapGroup == null) return RequestGroup([r]);
+    final seen = <String>{};
+    final legs = all
+        .where((x) => x.swapGroup == r.swapGroup && seen.add(x.id))
+        .toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+    return RequestGroup(legs);
   }
 
-  /// Mark a window request completed once the kids have been returned.
-  Future<void> complete(String id) async {
-    const body = {'status': 'completed'};
-    try {
-      await pb.collection('custody_requests').update(id, body: body);
-    } catch (e) {
-      if (!isNetworkError(e)) rethrow;
-      await QueueService.enqueue(PendingOp(
-        id:         QueueService.newOpId(),
-        collection: 'custody_requests',
-        method:     'update',
-        body:       {'status': 'completed'},
-        recordId:   id,
-      ));
-      _updateCount();
-      return;
+  // ── Respond ─────────────────────────────────────────────────────────────────
+
+  /// Accept or decline (every leg of a swap together). An optional [note]
+  /// (e.g. a decline reason) is appended so the requester sees the context.
+  Future<void> respond(RequestGroup group,
+      {required bool accept, String? note}) async {
+    final status = accept ? 'accepted' : 'declined';
+    final reason = note?.trim() ?? '';
+    for (var i = 0; i < group.legs.length; i++) {
+      final leg  = group.legs[i];
+      final body = <String, dynamic>{'status': status};
+      if (reason.isNotEmpty) {
+        body['note'] = [
+          if (leg.note != null && leg.note!.isNotEmpty) leg.note,
+          '${accept ? 'Accepted' : 'Declined'}: $reason',
+        ].join('\n');
+      }
+      try {
+        await pb.collection('custody_requests').update(leg.id, body: body);
+      } catch (e) {
+        if (!isNetworkError(e)) rethrow;
+        for (final rest in group.legs.sublist(i)) {
+          await QueueService.enqueue(PendingOp(
+            id:         QueueService.newOpId(),
+            collection: 'custody_requests',
+            method:     'update',
+            body:       body,
+            recordId:   rest.id,
+          ));
+        }
+        await _updateQueueCount();
+        break;
+      }
     }
-    ref.invalidateSelf();
-    ref.invalidate(acceptedCustodyProvider);
+    _changed();
   }
 
-  // ── Write: shared one-off event ────────────────────────────────────────────
+  // ── Internals ───────────────────────────────────────────────────────────────
 
-  Future<void> createSharedEvent({
-    required String targetDate,
-    required String childName,
-    required String time,
-    required String activity,
-    required String location,
-    required String assignedParent,
-    String? endTime,
-    String? note,
-  }) async {
-    final auth = ref.read(authProvider).valueOrNull;
-    final myId = auth?.userId ?? '';
-    final hid  = ref.read(householdProvider).valueOrNull?.id;
-    // Every create MUST stamp household — the hardened access rules deny
-    // unstamped records with an opaque 400 otherwise.
-    if (hid == null) {
+  _Party _party() {
+    final household = ref.read(householdProvider).valueOrNull;
+    if (household == null) {
       throw Exception('No active household yet — please try again in a moment.');
     }
-    final body = {
-      'target_date':     targetDate,
-      'child_name':      childName,
-      'original_parent': assignedParent,
-      'assigned_parent': assignedParent,
-      'override_time':   time,
-      'reason':          activity,  // required field — use activity as reason
-      'created_by':      myId,
-      'is_adhoc':        true,
-      'is_shared':       true,
-      'activity':        activity,
-      'location':        location,
-      if (endTime != null && endTime.isNotEmpty) 'end_time': endTime,
-      if (note != null && note.isNotEmpty) 'note': note,
-      'household': hid,
-    };
-    try {
-      await pb.collection('manual_overrides').create(body: body);
-    } catch (e) {
-      if (!isNetworkError(e)) rethrow;
-      await QueueService.enqueue(PendingOp(
-        id:         QueueService.newOpId(),
-        collection: 'manual_overrides',
-        method:     'create',
-        body:       body,
-      ));
-      _updateCount();
-      return;
-    }
-    ref.invalidate(manualOverridesProvider);
-    ref.invalidate(dashboardProvider);
-    ref.invalidate(weekEventsProvider);
-    ref.invalidate(resolvedDayProvider);
-    WidgetCacheService.updateCache(); // refresh home-screen widget immediately
-  }
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
-  /// Returns the PocketBase user id of the other parent.
-  /// Returns the display name of the other parent in the household.
-  String _otherParentName(String myName) {
-    final household = ref.read(householdProvider).valueOrNull;
-    if (household != null) {
-      final other = household.parents
-          .where((m) => m.displayName != myName)
-          .firstOrNull;
-      if (other != null) return other.displayName;
-    }
-    // Fallback for legacy setups
-    return myName == AppConstants.parentBennet
-        ? AppConstants.parentJana
-        : AppConstants.parentBennet;
-  }
-
-  /// Resolves the PocketBase user ID of the other parent in this household.
-  ///
-  /// Three fallback strategies so this works offline after the first success:
-  ///   1. Look up the other parent from household members.
-  ///   2. List all users and take the one that isn't me.
-  ///   3. Return the value cached in SharedPreferences from a previous call.
-  Future<String> otherParentId() async {
-    final myId = pb.authStore.record?.id ?? '';
-
-    // Strategy 1: household members
-    final household = ref.read(householdProvider).valueOrNull;
-    if (household != null) {
-      final other = household.parents
-          .where((m) => m.userId != myId)
-          .firstOrNull;
-      if (other != null) {
-        await QueueService.saveOtherParentId(other.userId);
-        return other.userId;
-      }
-    }
-
-    // Strategy 2: list users
-    try {
-      final users = await pb.collection('users').getFullList();
-      final other = users.firstWhereOrNull((u) => u.id != myId);
-      if (other != null) {
-        await QueueService.saveOtherParentId(other.id);
-        return other.id;
-      }
-    } catch (_) {}
-
-    // Strategy 3: cached value
-    final cached = await QueueService.loadOtherParentId();
-    if (cached != null) return cached;
-
-    throw Exception(
-      'No co-parent found — invite them to join your household in CoPlan.',
+    final co = ref.read(coParentProvider);
+    return _Party(
+      householdId: household.id,
+      myId:        ref.read(authProvider).valueOrNull?.userId ?? '',
+      myName:      ref.read(myDisplayNameProvider),
+      coParent:    co == null ? null : (userId: co.userId, name: co.displayName),
     );
   }
 
-  void _updateCount() async {
-    final count = await QueueService.pendingCount();
-    ref.read(pendingOpsCountProvider.notifier).state = count;
+  Map<String, dynamic> _base(_Party p, String requestedFrom, String? note) => {
+        'id':             newRecordId(),
+        'status':         'pending',
+        'note':           note ?? '',
+        'created_by':     p.myId,
+        'requested_from': requestedFrom,
+        'household':      p.householdId,
+      };
+
+  /// Creates records in order. Offline, the rest are queued (their ids make
+  /// replays safe). If the server rejects a later record, earlier ones are
+  /// rolled back so a swap never exists with only one leg.
+  Future<void> _createAll(List<Map<String, dynamic>> bodies) async {
+    final created = <String>[];
+    for (var i = 0; i < bodies.length; i++) {
+      try {
+        await pb.collection('custody_requests').create(body: bodies[i]);
+        created.add(bodies[i]['id'] as String);
+      } catch (e) {
+        if (isNetworkError(e)) {
+          for (final body in bodies.sublist(i)) {
+            await QueueService.enqueue(PendingOp(
+              id:         QueueService.newOpId(),
+              collection: 'custody_requests',
+              method:     'create',
+              body:       body,
+            ));
+          }
+          await _updateQueueCount();
+          break;
+        }
+        for (final id in created) {
+          try {
+            await pb.collection('custody_requests').delete(id);
+          } catch (_) {}
+        }
+        rethrow;
+      }
+    }
+    _changed();
+  }
+
+  Future<void> _updateAll(List<String> ids, Map<String, dynamic> body) async {
+    for (var i = 0; i < ids.length; i++) {
+      try {
+        await pb.collection('custody_requests').update(ids[i], body: body);
+      } catch (e) {
+        if (!isNetworkError(e)) rethrow;
+        for (final id in ids.sublist(i)) {
+          await QueueService.enqueue(PendingOp(
+            id:         QueueService.newOpId(),
+            collection: 'custody_requests',
+            method:     'update',
+            body:       body,
+            recordId:   id,
+          ));
+        }
+        await _updateQueueCount();
+        break;
+      }
+    }
+    _changed();
+  }
+
+  void _changed() {
+    ref.invalidateSelf();
+    ref.invalidate(acceptedCustodyProvider);
+    WidgetCacheService.updateSoon();
+  }
+
+  Future<void> _updateQueueCount() async {
+    ref.read(pendingOpsCountProvider.notifier).state =
+        await QueueService.pendingCount();
+  }
+}
+
+class _Party {
+  final String householdId;
+  final String myId;
+  final String myName;
+  final ({String userId, String name})? coParent;
+
+  const _Party({
+    required this.householdId,
+    required this.myId,
+    required this.myName,
+    required this.coParent,
+  });
+
+  ({String userId, String name}) requireCoParent() {
+    final co = coParent;
+    if (co == null) {
+      throw Exception(
+          'Invite your co-parent to the household first — requests go to them.');
+    }
+    return co;
   }
 }

@@ -1,10 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../engine/engine_factory.dart';
-import '../providers/custody_provider.dart';
-import '../providers/holiday_provider.dart';
-import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 import '../utils/dates.dart';
 import 'common.dart';
@@ -99,21 +95,17 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
               endDate:   _endDate != null ? isoDate(_endDate!) : null,
             );
       } else {
-        // Use rotation to determine responsible parent for that date.
-        final owner = buildEngine(
-          household: ref.read(householdProvider).valueOrNull,
-          holidayBlocks: ref.read(holidayBlocksProvider).valueOrNull ?? const [],
-        ).dayOwner(_date);
-        await ref.read(custodyRequestsProvider.notifier).createSharedEvent(
-              targetDate:     isoDate(_date),
-              childName:      _child,
-              time:           fmtTime(_time),
-              activity:       _activityCtrl.text.trim(),
-              location:       _locationCtrl.text.trim(),
-              assignedParent: owner,
-              endTime:        _endTime != null ? fmtTime(_endTime!) : null,
-              note:           _noteCtrl.text.trim(),
-            );
+        await ref.read(manualOverridesNotifierProvider.notifier).createEvents([
+          NewEvent(
+            date:      _date,
+            time:      fmtTime(_time),
+            endTime:   _endTime != null ? fmtTime(_endTime!) : null,
+            activity:  _activityCtrl.text.trim(),
+            location:  _locationCtrl.text.trim(),
+            childName: _child,
+            note:      _noteCtrl.text.trim(),
+          ),
+        ]);
       }
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -161,7 +153,7 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
             Text(
               _mode == _AddMode.standing
                   ? 'Repeats every week on the chosen day.'
-                  : 'A one-time event both parents will see.',
+                  : 'Happens once, on the chosen date.',
               style: TextStyle(
                   fontSize: 12,
                   color: Theme.of(context).colorScheme.onSurfaceVariant),
@@ -254,8 +246,8 @@ class _AddEventSheetState extends ConsumerState<AddEventSheet> {
               SwitchListTile(
                 value: _isShared,
                 onChanged: (v) => setState(() => _isShared = v),
-                title: const Text('Both parents always see this'),
-                subtitle: const Text('Marks it as a shared obligation'),
+                title: const Text('Both parents attend'),
+                subtitle: const Text('For events you both go to'),
                 contentPadding: EdgeInsets.zero,
               ),
             ],

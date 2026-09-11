@@ -1,27 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../engine/engine_factory.dart';
 import '../models/app_colors.dart';
-import '../models/base_rule.dart';
-import '../models/custody_request.dart';
-import '../models/recurring_arrangement.dart';
-import '../models/weekday_rule.dart';
-import '../providers/absence_provider.dart';
-import '../providers/holiday_provider.dart';
 import '../providers/colors_provider.dart';
-import '../providers/custody_provider.dart';
-import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 import '../utils/dates.dart';
 import 'day_split.dart';
 
 /// Full-month colour-coded grid.
-/// Each cell background reflects [ResolutionEngine.dayOwner] for that date.
-/// Days outside the current month are dimmed. Tapping a day calls [onDaySelected].
-///
-/// Accepted window requests (with a return time) are shown as a diagonal split:
-/// the day owner's colour top-left, the window recipient's colour bottom-right.
+/// Each cell background reflects who has the kids that day; days outside the
+/// month are faded. Mid-day changes (a handover, or a time window) render as a
+/// diagonal split. Dots under the date mark one-off events — exams in the
+/// child's colour.
 class MonthGrid extends ConsumerWidget {
   /// Any date within the target month.
   final DateTime month;
@@ -37,44 +27,37 @@ class MonthGrid extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final colors          = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
-    final rules           = ref.watch(baseRulesProvider).valueOrNull ?? const <BaseRule>[];
-    final weekdayRules    = ref.watch(weekdayRulesProvider).valueOrNull
-            ?? const <WeekdayRule>[];
-    final recurring       = ref.watch(recurringArrangementsProvider).valueOrNull
-            ?? const <RecurringArrangement>[];
-    final custodyRequests = ref.watch(custodyRequestsProvider).valueOrNull
-            ?.where((r) => r.isAccepted)
-            .toList() ??
-        const <CustodyRequest>[];
-    final absences  = ref.watch(absencePeriodsProvider).valueOrNull ?? const [];
-    final holidays  = ref.watch(holidayBlocksProvider).valueOrNull ?? const [];
+    final cs        = Theme.of(context).colorScheme;
+    final colors    = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
+    final engine    = ref.watch(scheduleEngineProvider);
+    final today     = ref.watch(todayProvider);
+    final overrides = ref.watch(manualOverridesProvider).valueOrNull ?? const [];
 
-    final engine = buildEngine(
-      household:             ref.watch(householdProvider).valueOrNull,
-      baseRules:             rules,
-      custodyRequests:       custodyRequests,
-      weekdayRules:          weekdayRules,
-      recurringArrangements: recurring,
-      absencePeriods:        absences,
-      holidayBlocks:         holidays,
-    );
+    final markers = <String, List<Color>>{};
+    for (final o in overrides) {
+      if (!o.isAdhoc) continue;
+      final color = o.isExam
+          ? (colors.isChildSpecific(o.childName)
+              ? colors.childColor(o.childName)
+              : cs.tertiary)
+          : cs.onSurfaceVariant;
+      final dots = markers.putIfAbsent(isoDate(o.targetDate), () => []);
+      if (dots.length < 3 && !dots.contains(color)) dots.add(color);
+    }
 
     final firstOfMonth = DateTime(month.year, month.month, 1);
-    final gridStart =
-        firstOfMonth.subtract(Duration(days: firstOfMonth.weekday - 1));
-
-    final lastOfMonth = DateTime(month.year, month.month + 1, 0);
-    final gridEnd =
-        lastOfMonth.add(Duration(days: DateTime.sunday - lastOfMonth.weekday));
-    final totalDays  = gridEnd.difference(gridStart).inDays + 1;
-    final weekCount  = totalDays ~/ 7;
-
-    final today = DateTime.now();
+    final gridStart    = addDays(firstOfMonth, -(firstOfMonth.weekday - 1));
+    final lastOfMonth  = DateTime(month.year, month.month + 1, 0);
+    final gridEnd      = addDays(lastOfMonth, DateTime.sunday - lastOfMonth.weekday);
+    // UTC dates so a DST change inside the month can't shorten the count.
+    final totalDays = DateTime.utc(gridEnd.year, gridEnd.month, gridEnd.day)
+            .difference(DateTime.utc(gridStart.year, gridStart.month, gridStart.day))
+            .inDays +
+        1;
+    final weekCount = totalDays ~/ 7;
 
     return Column(
       children: [
-        // ── Day-of-week header ────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4),
           child: Row(
@@ -86,9 +69,7 @@ class MonthGrid extends ConsumerWidget {
                           style: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant,
+                            color: cs.onSurfaceVariant,
                           ),
                         ),
                       ),
@@ -97,13 +78,12 @@ class MonthGrid extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 4),
-        // ── Week rows ─────────────────────────────────────────────────────
         for (int week = 0; week < weekCount; week++)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
             child: Row(
               children: List.generate(7, (d) {
-                final date    = gridStart.add(Duration(days: week * 7 + d));
+                final date    = addDays(gridStart, week * 7 + d);
                 final inMonth = date.month == month.month;
                 final split   = computeDaySplit(engine, colors, date);
 
@@ -117,6 +97,7 @@ class MonthGrid extends ConsumerWidget {
                     colors:        colors,
                     onTap:         () => onDaySelected(date),
                     windowToColor: split.splitColor,
+                    markers:       markers[isoDate(date)] ?? const [],
                   ),
                 );
               }),
@@ -136,9 +117,13 @@ class _MonthCell extends StatelessWidget {
   final bool isToday;
   final AppColors colors;
   final VoidCallback onTap;
+
   /// When non-null, renders a diagonal split: day owner top-left,
   /// window-recipient bottom-right.
   final Color? windowToColor;
+
+  /// Up to three dot colours for one-off events on this day.
+  final List<Color> markers;
 
   const _MonthCell({
     required this.date,
@@ -149,19 +134,21 @@ class _MonthCell extends StatelessWidget {
     required this.colors,
     required this.onTap,
     this.windowToColor,
+    this.markers = const [],
   });
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     final parentColor = colors.parentColor(owner);
 
     final Color fg;
     if (isSelected) {
       fg = Colors.white;
     } else if (inMonth) {
-      fg = Theme.of(context).colorScheme.onSurface;
+      fg = cs.onSurface;
     } else {
-      fg = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.28);
+      fg = cs.onSurface.withValues(alpha: 0.28);
     }
 
     return InkWell(
@@ -188,7 +175,6 @@ class _MonthCell extends StatelessWidget {
           borderRadius: BorderRadius.circular(8),
           child: Stack(
             children: [
-              // Diagonal split — shown even when selected (higher opacity).
               if (inMonth && windowToColor != null)
                 SizedBox.expand(
                   child: CustomPaint(
@@ -211,6 +197,27 @@ class _MonthCell extends StatelessWidget {
                   ),
                 ),
               ),
+              if (inMonth && markers.isNotEmpty)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 4,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (final c in markers)
+                        Container(
+                          width: 4,
+                          height: 4,
+                          margin: const EdgeInsets.symmetric(horizontal: 1),
+                          decoration: BoxDecoration(
+                            color: isSelected ? Colors.white : c,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
             ],
           ),
         ),

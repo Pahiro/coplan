@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // Compose compiler plugin — required for @Composable lambdas in Glance widget code (Kotlin 2.x)
@@ -6,6 +8,15 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
     // Firebase / FCM — must come after the Android plugin; reads google-services.json
     id("com.google.gms.google-services")
+}
+
+// Release signing. CI writes android/key.properties (+ the keystore) from
+// repository secrets; locally the file is optional and release builds fall
+// back to the debug key. Every APK shipped so far is signed with that debug
+// key, so CI must use the same keystore or installed apps can't update in place.
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("key.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
 }
 
 android {
@@ -27,9 +38,21 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        keystoreProperties.getProperty("storeFile")?.let { store ->
+            create("release") {
+                storeFile = file(store)
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release")
+                ?: signingConfigs.getByName("debug")
             isMinifyEnabled = false
             isShrinkResources = false
         }

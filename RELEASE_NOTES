@@ -1,3 +1,7 @@
-CoPlan — reliable push notifications.
-• Notifications for pickup requests, handovers and shared expenses now arrive even when the app is closed or your phone is locked.
-• Tip: if you don't see them, open Settings → Notifications and allow CoPlan to ignore battery optimisation.
+CoPlan 3.2 — day swaps, exam timetables and a shared to-buy list.
+• Swap days: trade one of your days for one of your co-parent's in a single request. They accept or decline both days together.
+• Exam timetables: add a child's exam papers in one go (New → Exam timetable). They show on Today and the calendar, and as a heads-up when someone plans a swap on an exam day.
+• To buy: a shared list of things the kids need. Tap I'll get it so it's only bought once, then share the cost as an expense.
+• Requests waiting for your answer now sit at the top of Today, and notifications for requests and expenses arrive reliably.
+• Changes your co-parent makes now appear without restarting the app.
+• Settle up is now confirmed by the parent who is owed. Weekly repeating requests were removed — use a swap or a one-off request instead.

@@ -314,7 +314,7 @@ class _AbsenceSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final absencesAsync = ref.watch(absencePeriodsProvider);
-    final myName = ref.watch(authProvider).valueOrNull?.userName?.trim() ?? '';
+    final myName = ref.watch(myDisplayNameProvider);
     final fmt    = DateFormat('d MMM yyyy');
 
     void openSheet() => showModalBottomSheet<void>(

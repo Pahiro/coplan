@@ -5,10 +5,9 @@ import 'package:coplan/engine/resolution_engine.dart';
 import 'package:coplan/models/absence_period.dart';
 import 'package:coplan/models/base_rule.dart';
 import 'package:coplan/models/custody_request.dart';
+import 'package:coplan/models/holiday_block.dart';
 import 'package:coplan/models/manual_override.dart';
-import 'package:coplan/models/recurring_arrangement.dart';
 import 'package:coplan/models/rotation_scheme.dart';
-import 'package:coplan/models/weekday_rule.dart';
 
 // ── Builders ──────────────────────────────────────────────────────────────────
 
@@ -16,9 +15,8 @@ ResolutionEngine engine({
   List<BaseRule> baseRules = const [],
   List<ManualOverride> overrides = const [],
   List<CustodyRequest> custody = const [],
-  List<WeekdayRule> weekdayRules = const [],
-  List<RecurringArrangement> recurring = const [],
   List<AbsencePeriod> absences = const [],
+  List<HolidayBlock> holidays = const [],
   required DateTime anchor,
   String even = 'Alice',
   String odd = 'Bob',
@@ -29,9 +27,8 @@ ResolutionEngine engine({
       baseRules: baseRules,
       overrides: overrides,
       custodyRequests: custody,
-      weekdayRules: weekdayRules,
-      recurringArrangements: recurring,
       absencePeriods: absences,
+      holidayBlocks: holidays,
       rotationAnchor: anchor,
       rotationParentEven: even,
       rotationParentOdd: odd,
@@ -55,11 +52,27 @@ AbsencePeriod absence({
       createdBy: 'u1',
     );
 
+HolidayBlock holiday({
+  required String parent,
+  required DateTime start,
+  required DateTime end,
+}) =>
+    HolidayBlock(
+      id: 'hol',
+      householdId: 'hh',
+      name: 'School holiday',
+      assignedParent: parent,
+      startDate: start,
+      endDate: end,
+      createdBy: 'u1',
+    );
+
 BaseRule rule(int dow, String time,
         {String child = 'All',
         String activity = 'Event',
         String id = 'r',
-        DateTime? endDate}) =>
+        DateTime? endDate,
+        String? handoverFrom}) =>
     BaseRule(
         id: id,
         childName: child,
@@ -67,7 +80,8 @@ BaseRule rule(int dow, String time,
         eventTime: time,
         location: '',
         activity: activity,
-        endDate: endDate);
+        endDate: endDate,
+        handoverFrom: handoverFrom);
 
 CustodyRequest custodyReq({
   required DateTime date,
@@ -79,6 +93,7 @@ CustodyRequest custodyReq({
   String child = 'All',
   CustodyStatus status = CustodyStatus.accepted,
   String id = 'c',
+  String? swapGroup,
 }) =>
     CustodyRequest(
       id: id,
@@ -92,25 +107,7 @@ CustodyRequest custodyReq({
       status: status,
       createdBy: 'u1',
       requestedFrom: 'u2',
-    );
-
-RecurringArrangement recurring({
-  required int dow,
-  required String to,
-  String pickup = '17:30',
-  String child = 'All',
-  required DateTime start,
-  DateTime? endDate,
-  String id = 'arr',
-}) =>
-    RecurringArrangement(
-      id: id,
-      dayOfWeek: dow,
-      toParent: to,
-      childName: child,
-      pickupTime: pickup,
-      startDate: start,
-      endDate: endDate,
+      swapGroup: swapGroup,
     );
 
 ManualOverride override({
@@ -120,6 +117,9 @@ ManualOverride override({
   String reason = '',
   String? time,
   String id = 'o',
+  bool adhoc = false,
+  String kind = '',
+  String? activity,
 }) =>
     ManualOverride(
       id: id,
@@ -129,11 +129,10 @@ ManualOverride override({
       overrideTime: time,
       reason: reason,
       createdBy: 'u1',
+      isAdhoc: adhoc,
+      adhocActivity: activity,
+      kind: kind,
     );
-
-DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
-DateTime daysFromToday(int n) =>
-    dateOnly(DateTime.now()).add(Duration(days: n));
 
 void main() {
   final monAnchor = DateTime(2025, 1, 6); // a Monday
@@ -162,18 +161,18 @@ void main() {
   });
 
   group('baseOwner / dayOwner', () {
-    test('baseOwner follows rotation without rules', () {
+    test('baseOwner follows rotation without holidays', () {
       final e = engine(anchor: monAnchor);
       expect(e.baseOwner(DateTime(2025, 1, 13)), 'Bob');
     });
 
-    test('weekday rule overrides rotation for baseOwner and dayOwner', () {
-      final e = engine(anchor: monAnchor, weekdayRules: [
-        const WeekdayRule(id: 'w', dayOfWeek: 1, assignedParent: 'Bob'),
+    test('holiday block overrides rotation', () {
+      final d = DateTime(2025, 1, 8); // Alice's week
+      final e = engine(anchor: monAnchor, holidays: [
+        holiday(parent: 'Bob', start: d, end: d),
       ]);
-      // 2025-01-06 is a Monday → rotation says Alice, weekday rule says Bob.
-      expect(e.baseOwner(DateTime(2025, 1, 6)), 'Bob');
-      expect(e.dayOwner(DateTime(2025, 1, 6)), 'Bob');
+      expect(e.baseOwner(d), 'Bob');
+      expect(e.dayOwner(d), 'Bob');
     });
 
     test('accepted day transfer wins dayOwner', () {
@@ -182,6 +181,14 @@ void main() {
         custodyReq(date: d, to: 'Bob', pickup: '00:00'),
       ]);
       expect(e.dayOwner(d), 'Bob');
+    });
+
+    test('pending requests are ignored', () {
+      final d = DateTime(2025, 1, 8);
+      final e = engine(anchor: monAnchor, custody: [
+        custodyReq(date: d, to: 'Bob', pickup: '00:00', status: CustodyStatus.pending),
+      ]);
+      expect(e.dayOwner(d), 'Alice');
     });
   });
 
@@ -205,67 +212,40 @@ void main() {
       expect(e.parentAtTime(d, const TimeOfDay(hour: 16, minute: 0)), 'Alice');
       expect(e.custodyWindows(d).length, 1);
     });
+
+    test('a per-child transfer does not move siblings', () {
+      final e = engine(anchor: monAnchor, custody: [
+        custodyReq(date: d, to: 'Bob', pickup: '00:00', child: 'Henri'),
+      ]);
+      expect(e.parentAtTime(d, const TimeOfDay(hour: 9, minute: 0), child: 'Henri'), 'Bob');
+      expect(e.parentAtTime(d, const TimeOfDay(hour: 9, minute: 0), child: 'Chris'), 'Alice');
+    });
   });
 
-  group('recurring arrangement expansion', () {
-    // target: a date safely in the future, on its own weekday.
-    final target = daysFromToday(21);
-    final wd = target.weekday;
-    final start = DateTime(2025, 1, 1);
+  group('day swaps', () {
+    // Alice gives Bob her Wednesday and takes his Wednesday a week later.
+    final aliceWed = DateTime(2025, 1, 8);
+    final bobWed = DateTime(2025, 1, 15);
+    final e = engine(anchor: monAnchor, baseRules: [
+      rule(DateTime.wednesday, '16:00', activity: 'Swimming', id: 'swim'),
+    ], custody: [
+      custodyReq(date: aliceWed, from: 'Alice', to: 'Bob', pickup: '00:00', id: 'leg1', swapGroup: 'g'),
+      custodyReq(date: bobWed, from: 'Bob', to: 'Alice', pickup: '00:00', id: 'leg2', swapGroup: 'g'),
+    ]);
 
-    test('fires when the OTHER parent owns the day', () {
-      // anchor == target → daysSince 0 → even parent (Alice) owns the day.
-      final e = engine(anchor: target, recurring: [
-        recurring(dow: wd, to: 'Bob', start: start),
-      ]);
-      final transfer = e.dayTransferFor(target);
-      expect(transfer, isNotNull);
-      expect(transfer!.toParent, 'Bob');
-      expect(transfer.fromParent, 'Alice'); // released by the day owner
-      expect(e.dayOwner(target), 'Bob');
+    test('both days change hands', () {
+      expect(e.dayOwner(aliceWed), 'Bob');
+      expect(e.dayOwner(bobWed), 'Alice');
     });
 
-    test('suppressed on weeks the recipient already owns the day', () {
-      // anchor = target-7 → daysSince 7 → odd parent (Bob) owns the day.
-      final e = engine(
-          anchor: target.subtract(const Duration(days: 7)),
-          recurring: [recurring(dow: wd, to: 'Bob', start: start)]);
-      expect(e.effectiveCustodyFor(target), isEmpty);
-    });
-
-    test('not expanded for past dates (history comes from frozen rows)', () {
-      final past = daysFromToday(-7);
-      final e = engine(anchor: past, recurring: [
-        recurring(dow: past.weekday, to: 'Bob', start: DateTime(2024, 1, 1)),
-      ]);
-      expect(e.effectiveCustodyFor(past), isEmpty);
-    });
-
-    test('not expanded before start_date', () {
-      final e = engine(anchor: target, recurring: [
-        recurring(
-            dow: wd, to: 'Bob', start: target.add(const Duration(days: 7))),
-      ]);
-      expect(e.effectiveCustodyFor(target), isEmpty);
-    });
-
-    test('suppressed when a real request already covers the date', () {
-      final e = engine(anchor: target, custody: [
-        custodyReq(date: target, to: 'Bob', pickup: '17:30', id: 'real'),
-      ], recurring: [
-        recurring(dow: wd, to: 'Bob', start: start),
-      ]);
-      final all = e.effectiveCustodyFor(target);
-      expect(all.length, 1);
-      expect(all.single.id, 'real'); // not the virtual one
-    });
-
-    test('not expanded on a non-matching weekday', () {
-      final otherDow = (wd % 7) + 1;
-      final e = engine(anchor: target, recurring: [
-        recurring(dow: otherDow, to: 'Bob', start: start),
-      ]);
-      expect(e.effectiveCustodyFor(target), isEmpty);
+    test('events follow the swap and the banner is labelled', () {
+      final first = e.resolveDay(aliceWed);
+      expect(first.firstWhere((x) => x.ruleId == 'swim').assignedParent, 'Bob');
+      final banner = first.firstWhere((x) => x.isCustody);
+      expect(banner.activity, 'All in Bob\'s care · swap');
+      expect(banner.swapGroup, 'g');
+      expect(e.resolveDay(bobWed).firstWhere((x) => x.ruleId == 'swim').assignedParent,
+          'Alice');
     });
   });
 
@@ -288,38 +268,74 @@ void main() {
   });
 
   group('resolveDay', () {
-    final target = daysFromToday(21);
-    final wd = target.weekday;
+    final d = DateTime(2025, 1, 8); // Wed, Alice's week
+    final wd = d.weekday;
 
     test('orders events by time with custody banner first at a tie', () {
-      final e = engine(anchor: target, baseRules: [
+      final e = engine(anchor: monAnchor, baseRules: [
         rule(wd, '16:00', activity: 'School', id: 'r16'),
         rule(wd, '17:30', activity: 'Clash', id: 'r1730'),
         rule(wd, '18:00', activity: 'Dinner', id: 'r18'),
-      ], recurring: [
-        recurring(dow: wd, to: 'Bob', pickup: '17:30', start: DateTime(2025, 1, 1)),
+      ], custody: [
+        custodyReq(date: d, to: 'Bob', pickup: '17:30'),
       ]);
 
-      final events = e.resolveDay(target);
+      final events = e.resolveDay(d);
       // 16:00 School, 17:30 banner (custody), 17:30 Clash, 18:00 Dinner
       expect(events[0].activity, 'School');
-      expect(events[1].recurringId, isNotNull); // banner sorts before same-time
+      expect(events[1].isCustody, isTrue);
       expect(events[2].activity, 'Clash');
       expect(events[3].activity, 'Dinner');
     });
 
     test('parent flips at the transfer pickup time', () {
-      final e = engine(anchor: target, baseRules: [
+      final e = engine(anchor: monAnchor, baseRules: [
         rule(wd, '16:00', id: 'r16'),
         rule(wd, '18:00', id: 'r18'),
-      ], recurring: [
-        recurring(dow: wd, to: 'Bob', pickup: '17:30', start: DateTime(2025, 1, 1)),
+      ], custody: [
+        custodyReq(date: d, to: 'Bob', pickup: '17:30'),
       ]);
-      final events = e.resolveDay(target);
-      final before = events.firstWhere((x) => x.ruleId == 'r16');
-      final after = events.firstWhere((x) => x.ruleId == 'r18');
-      expect(before.assignedParent, 'Alice'); // day owner before handover
-      expect(after.assignedParent, 'Bob'); // recipient after handover
+      final events = e.resolveDay(d);
+      expect(events.firstWhere((x) => x.ruleId == 'r16').assignedParent, 'Alice');
+      expect(events.firstWhere((x) => x.ruleId == 'r18').assignedParent, 'Bob');
+    });
+
+    test('directional handover rule renders only for the outgoing parent', () {
+      final e = engine(anchor: monAnchor, baseRules: [
+        rule(wd, '10:00', id: 'fromAlice', handoverFrom: 'Alice'),
+        rule(wd, '12:00', id: 'fromBob', handoverFrom: 'Bob'),
+      ]);
+      final ids = e.resolveDay(d).map((x) => x.ruleId).toList();
+      expect(ids, ['fromAlice']);
+    });
+  });
+
+  group('one-off events', () {
+    final d = DateTime(2025, 1, 8); // Alice's week
+
+    test('responsible parent is resolved live, not the stored value', () {
+      // Stored when Alice owned the day; a holiday block added later gives
+      // the day to Bob, and the event must follow.
+      final e = engine(anchor: monAnchor, overrides: [
+        override(date: d, assigned: 'Alice', adhoc: true, time: '15:00',
+            activity: 'Party', id: 'party'),
+      ], holidays: [
+        holiday(parent: 'Bob', start: d, end: d),
+      ]);
+      final ev = e.resolveDay(d).single;
+      expect(ev.assignedParent, 'Bob');
+      expect(ev.custodyNote, isNull);
+    });
+
+    test('exam kind passes through', () {
+      final e = engine(anchor: monAnchor, overrides: [
+        override(date: d, assigned: 'Alice', adhoc: true, time: '09:00',
+            activity: 'Maths P1', child: 'Henri', kind: 'exam', id: 'exam'),
+      ]);
+      final ev = e.resolveDay(d).single;
+      expect(ev.isExam, isTrue);
+      expect(ev.activity, 'Maths P1');
+      expect(ev.childName, 'Henri');
     });
   });
 
@@ -337,7 +353,7 @@ void main() {
       expect(ev.overrideReason, 'Dad swap');
     });
 
-    test('custody request beats override and drops the override reason (#3)', () {
+    test('custody request beats override and drops the override reason', () {
       final e = engine(anchor: monAnchor, baseRules: [
         rule(d.weekday, '16:00', id: 'r16'),
       ], overrides: [
@@ -350,8 +366,7 @@ void main() {
       expect(ev.overrideReason, isNull); // mixed-provenance reason dropped
     });
 
-    test('"All" override matches a child-specific rule and vice versa (#4)', () {
-      // All override → Henri rule
+    test('"All" override matches a child-specific rule and vice versa', () {
       final e1 = engine(anchor: monAnchor, baseRules: [
         rule(d.weekday, '16:00', child: 'Henri', id: 'rH'),
       ], overrides: [
@@ -360,7 +375,6 @@ void main() {
       expect(e1.resolveDay(d).firstWhere((x) => x.ruleId == 'rH').assignedParent,
           'Bob');
 
-      // Henri override → All rule
       final e2 = engine(anchor: monAnchor, baseRules: [
         rule(d.weekday, '16:00', child: 'All', id: 'rA'),
       ], overrides: [
@@ -383,7 +397,6 @@ void main() {
   });
 
   group('absence periods', () {
-    // Alice owns monAnchor week; Bob owns the next week.
     final aliceDay = DateTime(2025, 1, 6); // Monday, Alice's week
     final bobDay   = DateTime(2025, 1, 13); // Monday, Bob's week
 
@@ -411,6 +424,16 @@ void main() {
       expect(e.dayOwner(aliceDay.add(const Duration(days: 1))), 'Alice');
     });
 
+    test('before a transfer pickup the absence still applies', () {
+      final e = engine(
+        anchor: monAnchor,
+        absences: [absence(parent: 'Alice', start: aliceDay, end: aliceDay)],
+        custody: [custodyReq(date: aliceDay, to: 'Gran', pickup: '17:00')],
+      );
+      expect(e.parentAtTime(aliceDay, const TimeOfDay(hour: 8, minute: 0)), 'Bob');
+      expect(e.parentAtTime(aliceDay, const TimeOfDay(hour: 18, minute: 0)), 'Gran');
+    });
+
     test('manual override beats absence — override parent is respected', () {
       final d = aliceDay;
       final e = engine(
@@ -424,11 +447,7 @@ void main() {
         ],
         absences: [absence(parent: 'Alice', start: d, end: d)],
       );
-      // Manual override explicitly assigns Alice — absence does not override it.
-      expect(
-        e.resolveDay(d).first.assignedParent,
-        'Alice',
-      );
+      expect(e.resolveDay(d).first.assignedParent, 'Alice');
     });
 
     test('resolveDay shows absence reason on affected events', () {
@@ -453,53 +472,31 @@ void main() {
     });
   });
 
-  group('end dates (inclusive)', () {
-    final target = daysFromToday(21); // future date on its own weekday
-    final wd = target.weekday;
-    final start = DateTime(2025, 1, 1);
+  group('standing event end dates (inclusive)', () {
+    final d = DateTime(2025, 1, 8);
+    final wd = d.weekday;
 
-    test('standing event still renders on its end date, gone the next week', () {
-      final e = engine(anchor: target, baseRules: [
-        rule(wd, '16:00', activity: 'Swimming', id: 'rs', endDate: target),
+    test('renders on its end date, gone the next week', () {
+      final e = engine(anchor: monAnchor, baseRules: [
+        rule(wd, '16:00', activity: 'Swimming', id: 'rs', endDate: d),
       ]);
-      // On the end date the event is present…
-      expect(
-        e.resolveDay(target).where((x) => x.ruleId == 'rs'), isNotEmpty);
-      // …but the same weekday a week later is past the end date.
-      final nextWeek = target.add(const Duration(days: 7));
-      expect(
-        e.resolveDay(nextWeek).where((x) => x.ruleId == 'rs'), isEmpty);
+      expect(e.resolveDay(d).where((x) => x.ruleId == 'rs'), isNotEmpty);
+      final nextWeek = d.add(const Duration(days: 7));
+      expect(e.resolveDay(nextWeek).where((x) => x.ruleId == 'rs'), isEmpty);
     });
 
-    test('standing event without an end date repeats forever', () {
-      final e = engine(anchor: target, baseRules: [
-        rule(wd, '16:00', id: 'rs'),
+    test('a time-of-day on the date does not end it early', () {
+      final e = engine(anchor: monAnchor, baseRules: [
+        rule(wd, '16:00', id: 'rs', endDate: d),
       ]);
-      final nextWeek = target.add(const Duration(days: 7));
-      expect(e.resolveDay(nextWeek).where((x) => x.ruleId == 'rs'), isNotEmpty);
+      final afternoon = DateTime(d.year, d.month, d.day, 14, 30);
+      expect(e.resolveDay(afternoon).where((x) => x.ruleId == 'rs'), isNotEmpty);
     });
 
-    test('recurring arrangement fires on its end date, stops after', () {
-      final e = engine(anchor: target, recurring: [
-        recurring(dow: wd, to: 'Bob', start: start, endDate: target),
-      ]);
-      expect(e.dayTransferFor(target), isNotNull); // inclusive on end date
-      final nextWeek = target.add(const Duration(days: 7));
-      expect(e.effectiveCustodyFor(nextWeek), isEmpty); // past end date
-    });
-
-    test('weekday rule applies on its end date, falls back to rotation after', () {
-      // anchor == target → daysSince 0 → even parent (Alice) owns the day by
-      // rotation; a weekday rule assigns Bob until `target` (inclusive).
-      final ruleEnd = WeekdayRule(
-          id: 'w', dayOfWeek: wd, assignedParent: 'Bob', endDate: target);
-      final e = engine(anchor: target, weekdayRules: [ruleEnd]);
-      expect(e.dayOwner(target), 'Bob'); // rule wins on the end date
-      // Two weeks on is another even (Alice) rotation week; the rule has lapsed
-      // so the day reverts to the rotation owner rather than the rule's Bob.
-      final later = target.add(const Duration(days: 14));
-      expect(e.weekOwner(later), 'Alice');
-      expect(e.dayOwner(later), 'Alice');
+    test('without an end date it repeats forever', () {
+      final e = engine(anchor: monAnchor, baseRules: [rule(wd, '16:00', id: 'rs')]);
+      final later = d.add(const Duration(days: 700));
+      expect(e.resolveDay(later).where((x) => x.ruleId == 'rs'), isNotEmpty);
     });
   });
 }

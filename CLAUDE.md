@@ -39,15 +39,21 @@ flutter analyze  # a few pre-existing lint warnings are expected
 
 - `lib/engine/resolution_engine.dart` is **pure Dart and the single source of
   truth**. Every UI surface builds an engine and asks it.
-- Priority: manual override → weekday rule → rotation; accepted custody requests
-  + recurring arrangements layer on by time of day.
-- Parents are **strings** (display names), not an enum. Rotation is
-  **pattern-based per household** (`RotationScheme`) using **UTC epoch math**.
-- The same logic is reimplemented in **two other places that must stay in sync**:
-  - Kotlin `CoplanSyncWorker.kt` (home-screen widgets).
-  - JS `freezeRecurring` cron in `pb_hooks/main.pb.js` (freezes past recurring
-    occurrences into immutable history).
-  Change one → update all three.
+- Who has the kids: accepted day transfer (from its pickup time) → absence →
+  holiday block → rotation. Per event, a manual override beats all but custody;
+  accepted requests (day handovers, swap legs, time windows) layer on by time
+  of day. One-off events/exams resolve their parent live.
+- A **day swap** is two linked day transfers sharing `swap_group`; they're
+  answered, cancelled and notified as one (`RequestGroup` / `groupRequests`).
+- Parents are **strings** (display names), not an enum. Use
+  `myDisplayNameProvider` / `coParentProvider` — never the account name.
+  Rotation is **pattern-based per household** (`RotationScheme`) using
+  **UTC epoch math**.
+- The logic is mirrored in Kotlin `CoplanSyncWorker.kt` (home-screen widgets).
+  Change one → update the other. (Weekly repeats and the server freeze cron
+  were removed in 3.2.)
+- Data freshness: source providers are watched by derived ones; call
+  `refreshAppData(ref.invalidate)` rather than invalidating derived providers.
 
 ## Security model (household-scoped) — IMPORTANT
 
@@ -56,7 +62,18 @@ Access rules restrict every collection to **members of the record's household**
 
 - **Every create MUST stamp `household`** (the active household id), or the
   hardened `createRule` denies it. Applies to rules_base, manual_overrides,
-  custody_requests, custody_recurring, custody_weekday_rules, children.
+  custody_requests, holiday_blocks, absence_periods, shared_expenses,
+  expense_splits, needs, children.
+- Rules hardened in `1779400027` (registration is open — assume a hostile
+  account): `users` list = self only; `app_settings` read-only; only the owner
+  adds members or changes `owner`; nobody can change a membership's
+  `household`/`user` or their own `role`; custody requests are created
+  `pending` by yourself, only the recipient sets status, and the creator edits
+  only while pending; expense splits are changed only by the expense's payer —
+  settle-up goes through `POST /api/coplan/settle-up` (DAO, creditor only).
+- Creates that can be queued offline carry a client-generated id
+  (`newRecordId()`), so replays fail with a duplicate-id error instead of
+  duplicating (`isDuplicateIdError`).
 - Membership filter (PB v0.22 back-relation):
   `household.household_members_via_household.user ?= @request.auth.id`.
 - **Invite redemption is server-side**: `POST /api/coplan/accept-invite`
@@ -73,6 +90,16 @@ Access rules restrict every collection to **members of the record's household**
   **NOT** the v0.23 `migrate((app) => app.dao())` form — it fails on this server
   with "Object has no member 'dao'".
 - `findRecordsByFilter` **rejects an empty filter** — use `"id != ''"` for "all".
+- ⚠️ **Hook handlers run in isolated contexts.** Functions/consts declared at
+  the top of `main.pb.js` are NOT visible inside `routerAdd`/`cronAdd`/`onRecord…`
+  handlers ("ReferenceError: … is not defined" — this silently broke all push
+  notifications until 3.2). Put helpers in `pb_hooks/coplan_utils.js` and
+  `const u = require(\`${__hooks}/coplan_utils.js\`)` inside each handler.
+- Test rule/hook changes on a throwaway copy before deploying: `sqlite3
+  data.db '.backup /tmp/x/pb_data/data.db'`, then run the server binary with
+  `--http=127.0.0.1:8099 --dir … --migrationsDir … --hooksDir …` and **no
+  PUSH_SECRET** (so no real pushes). `pkill -f '[h]ttp=127.0.0.1:8099'` to stop
+  it — an unbracketed pattern matches the ssh command itself.
 - Name new migrations with a **timestamp above the server's latest applied**
   one (we've been using the `17794000xx` range).
 - Always include a working **down** migration.
@@ -91,7 +118,7 @@ Access rules restrict every collection to **members of the record's household**
 ssh root@192.168.1.219 "systemctl stop coplan && tar czf /root/coplan-backups/pb_data-$(date +%Y%m%d-%H%M%S).tar.gz -C /opt/coplan pb_data"
 # 2. Copy files
 scp backend/pb_migrations/<file>.js root@192.168.1.219:/opt/coplan/pb_migrations/
-scp backend/pb_hooks/main.pb.js     root@192.168.1.219:/opt/coplan/pb_hooks/main.pb.js
+scp backend/pb_hooks/*.js           root@192.168.1.219:/opt/coplan/pb_hooks/
 # 3. Start + verify (migration applied, no hook errors, health 200)
 ssh root@192.168.1.219 "systemctl start coplan && sleep 4 && curl -s http://localhost:8090/api/health && journalctl -u coplan -n 15 --no-pager | grep -i error"
 ```

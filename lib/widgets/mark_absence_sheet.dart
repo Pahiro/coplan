@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../providers/absence_provider.dart';
-import '../providers/auth_provider.dart';
+import '../providers/household_provider.dart';
 import 'common.dart';
 
 /// Bottom sheet for marking an absence period.
@@ -68,7 +68,7 @@ class _MarkAbsenceSheetState extends ConsumerState<MarkAbsenceSheet> {
 
     setState(() => _saving = true);
     try {
-      final myName = ref.read(authProvider).valueOrNull?.userName?.trim() ?? 'Parent';
+      final myName = ref.read(myDisplayNameProvider);
       await ref.read(absencePeriodsProvider.notifier).create(
         absentParent: myName,
         startDate:    _start!,

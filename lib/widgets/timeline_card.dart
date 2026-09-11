@@ -1,22 +1,21 @@
-import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/app_colors.dart';
+import '../models/custody_request.dart';
 import '../models/resolved_event.dart';
+import '../providers/auth_provider.dart';
 import '../providers/colors_provider.dart';
 import '../providers/custody_provider.dart';
 import '../providers/household_provider.dart';
 import '../providers/schedule_provider.dart';
 import '../utils/dates.dart';
 import 'common.dart';
-import 'custody_request_edit_sheet.dart';
 import 'event_edit_sheet.dart';
 
-/// A single scheduled event rendered as a colour-coded card.
-/// Parent colour (blue = Bennet, pink = Jana) appears as a left border accent
-/// and a name badge. When the event is for a single child (not "All"), a small
-/// child-coloured chip is shown so split days are immediately identifiable.
+/// A single scheduled event rendered as a colour-coded card: the responsible
+/// parent's colour on the left, child/exam chips, and — when the parent isn't
+/// the usual one — why (override, absence, swap or handover).
 class TimelineCard extends ConsumerWidget {
   final ResolvedEvent event;
 
@@ -24,23 +23,70 @@ class TimelineCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final colors = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
-    final parent = event.assignedParent;
+    final cs        = Theme.of(context).colorScheme;
+    final colors    = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
     final household = ref.watch(householdProvider).valueOrNull;
-    final isHelper =
+    final myId      = ref.watch(authProvider).valueOrNull?.userId ?? '';
+    final parent    = event.assignedParent;
+    final isHelper  =
         household?.helpers.any((h) => h.displayName == parent) ?? false;
 
-    // Dim events when a custody request has shifted responsibility for this slot.
-    final isGreyed = event.custodyNote != null;
     final parentColor = colors.parentColor(parent);
     final parentLight = colors.parentLightColor(parent);
 
+    // The agreement behind a custody banner — only its requester may cancel.
+    RequestGroup? custodyGroup;
+    if (event.isCustody) {
+      final accepted = ref.watch(acceptedCustodyProvider).valueOrNull ?? const [];
+      final legs = accepted
+          .where((r) => event.swapGroup != null
+              ? r.swapGroup == event.swapGroup
+              : r.id == event.custodyRequestId)
+          .toList()
+        ..sort((a, b) => a.date.compareTo(b.date));
+      if (legs.isNotEmpty && legs.first.createdBy == myId) {
+        custodyGroup = RequestGroup(legs);
+      }
+    }
+    final hasMenu =
+        event.ruleId != null || event.overrideId != null || custodyGroup != null;
+
     final timeStr    = fmtTime(event.time);
     final endTimeStr = event.endTime != null ? fmtTime(event.endTime!) : null;
+    final specificChild = colors.isChildSpecific(event.childName);
 
-    return Opacity(
-      opacity: isGreyed ? 0.45 : 1.0,
-      child: Card(
+    Widget infoRow(IconData icon, String text, Color color,
+            {FontWeight? weight}) =>
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 1),
+                child: Icon(icon, size: 12, color: color),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(text,
+                    style: TextStyle(fontSize: 11.5, color: color, fontWeight: weight)),
+              ),
+            ],
+          ),
+        );
+
+    final chips = <Widget>[
+      if (event.isExam)
+        _Chip(
+          label: 'Exam',
+          icon: Icons.school_outlined,
+          color: specificChild ? colors.childColor(event.childName) : cs.tertiary,
+        ),
+      if (specificChild)
+        _Chip(label: event.childName, color: colors.childColor(event.childName)),
+    ];
+
+    return Card(
       margin: const EdgeInsets.only(bottom: 10),
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -48,9 +94,7 @@ class TimelineCard extends ConsumerWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Colour accent bar
             Container(width: 5, color: parentColor),
-            // Time chip
             Container(
               width: 54,
               color: parentLight,
@@ -59,143 +103,61 @@ class TimelineCard extends ConsumerWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      timeStr,
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                        color: parentColor,
-                      ),
-                    ),
-                    if (endTimeStr != null) ...[
-                      Text(
-                        '–',
-                        style: TextStyle(fontSize: 9, color: parentColor.withValues(alpha: 0.6)),
-                      ),
-                      Text(
-                        endTimeStr,
+                    Text(timeStr,
                         style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                          color: parentColor,
-                        ),
-                      ),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                            color: parentColor)),
+                    if (endTimeStr != null) ...[
+                      Text('–',
+                          style: TextStyle(
+                              fontSize: 9,
+                              color: parentColor.withValues(alpha: 0.6))),
+                      Text(endTimeStr,
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                              color: parentColor)),
                     ],
                   ],
                 ),
               ),
             ),
-            // Event details
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      event.activity,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 15),
-                    ),
-                    const SizedBox(height: 2),
+                    Text(event.activity,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w600, fontSize: 15)),
                     if (event.location.isNotEmpty)
-                      Text(
-                        event.location,
-                        style: TextStyle(color: Colors.grey[600], fontSize: 13),
-                      ),
-                    if (event.custodyTransportNote != null) ...[
-                      const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Icon(Icons.directions_car_outlined,
-                              size: 12, color: Colors.grey[500]),
-                          const SizedBox(width: 4),
-                          Text(
-                            event.custodyTransportNote!,
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(event.location,
                             style: TextStyle(
-                                fontSize: 12, color: Colors.grey[600]),
-                          ),
-                        ],
+                                color: cs.onSurfaceVariant, fontSize: 13)),
                       ),
-                    ],
-                    if (event.recurringId != null) ...[
-                      const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Icon(Icons.event_repeat_outlined,
-                              size: 12, color: Colors.grey[500]),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Repeats weekly',
-                            style: TextStyle(
-                                fontSize: 12, color: Colors.grey[600]),
-                          ),
-                        ],
+                    if (event.custodyTransportNote != null)
+                      infoRow(Icons.directions_car_outlined,
+                          event.custodyTransportNote!, cs.onSurfaceVariant),
+                    if (chips.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Wrap(spacing: 4, runSpacing: 4, children: chips),
                       ),
-                    ],
-                    const SizedBox(height: 6),
-                    // Child chip row
-                    _ChildChipRow(childName: event.childName, colors: colors),
-                    if (event.overrideReason != null) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          const Icon(Icons.info_outline,
-                              size: 12, color: Colors.orange),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              event.overrideReason!,
-                              style: const TextStyle(
-                                  fontSize: 11, color: Colors.orange),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                    if (event.custodyNote != null) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(Icons.swap_horiz_rounded,
-                              size: 12,
-                              color: Colors.blue.shade600),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              event.custodyNote!,
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.blue.shade700,
-                                  fontWeight: FontWeight.w500),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                    if (event.note != null && event.note!.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(Icons.notes_outlined,
-                              size: 12, color: Colors.grey[500]),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              event.note!,
-                              style: TextStyle(
-                                  fontSize: 11, color: Colors.grey[600]),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                    if (event.overrideReason != null)
+                      infoRow(Icons.info_outline, event.overrideReason!, cs.tertiary),
+                    if (event.custodyNote != null)
+                      infoRow(Icons.swap_horiz_rounded, event.custodyNote!,
+                          cs.primary, weight: FontWeight.w500),
+                    if (event.note != null && event.note!.isNotEmpty)
+                      infoRow(Icons.notes_outlined, event.note!, cs.onSurfaceVariant),
                   ],
                 ),
               ),
             ),
-            // Parent badge, shared indicator, and event menu
             Padding(
               padding: const EdgeInsets.all(10),
               child: Column(
@@ -209,75 +171,26 @@ class TimelineCard extends ConsumerWidget {
                       color: parentLight,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text(
-                      parent,
-                      style: TextStyle(
-                        color: parentColor,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                      ),
-                    ),
+                    child: Text(parent,
+                        style: TextStyle(
+                            color: parentColor,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12)),
                   ),
                   if (isHelper) ...[
                     const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: parentLight,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: parentColor.withValues(alpha: 0.4)),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.volunteer_activism_outlined,
-                              size: 11, color: parentColor),
-                          const SizedBox(width: 3),
-                          Text(
-                            'Helper',
-                            style: TextStyle(
-                                fontSize: 10,
-                                color: parentColor,
-                                fontWeight: FontWeight.w600),
-                          ),
-                        ],
-                      ),
-                    ),
+                    _Chip(
+                        label: 'Helper',
+                        icon: Icons.volunteer_activism_outlined,
+                        color: parentColor),
                   ],
                   if (event.isShared) ...[
                     const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Colors.teal.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: Colors.teal.withValues(alpha: 0.4)),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.people_outline,
-                              size: 11, color: Colors.teal),
-                          SizedBox(width: 3),
-                          Text(
-                            'Both',
-                            style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.teal,
-                                fontWeight: FontWeight.w600),
-                          ),
-                        ],
-                      ),
-                    ),
+                    _Chip(label: 'Both', icon: Icons.people_outline, color: cs.secondary),
                   ],
-                  if (event.ruleId != null ||
-                      event.overrideId != null ||
-                      event.custodyRequestId != null ||
-                      event.recurringId != null) ...[
+                  if (hasMenu) ...[
                     const SizedBox(height: 2),
-                    _EventMenu(event: event),
+                    _EventMenu(event: event, custodyGroup: custodyGroup),
                   ],
                 ],
               ),
@@ -285,23 +198,35 @@ class TimelineCard extends ConsumerWidget {
           ],
         ),
       ),
-    ));
+    );
   }
 }
 
 // ── Event context menu ────────────────────────────────────────────────────────
 
+enum _MenuAction { edit, delete, removeOverride, cancelCustody }
+
 class _EventMenu extends ConsumerWidget {
   final ResolvedEvent event;
-  const _EventMenu({required this.event});
+  final RequestGroup? custodyGroup;
+
+  const _EventMenu({required this.event, this.custodyGroup});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isCustodyEvent  = event.custodyRequestId != null;
-    final isAdhocOverride = event.overrideId != null && event.isAdhoc;
-    final isNonAdhocOverride = event.overrideId != null && !event.isAdhoc;
-    final isRule = event.ruleId != null && event.overrideId == null;
-    final isRecurring = event.recurringId != null;
+    final cs = Theme.of(context).colorScheme;
+    final isRule     = event.ruleId != null && event.overrideId == null;
+    final isOneOff   = event.overrideId != null && event.isAdhoc;
+    final isOverride = event.overrideId != null && !event.isAdhoc;
+
+    ListTile item(IconData icon, String label, {bool destructive = false}) =>
+        ListTile(
+          leading: Icon(icon, color: destructive ? cs.error : null),
+          title: Text(label,
+              style: destructive ? TextStyle(color: cs.error) : null),
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+        );
 
     return SizedBox(
       height: 24,
@@ -309,55 +234,28 @@ class _EventMenu extends ConsumerWidget {
       child: PopupMenuButton<_MenuAction>(
         padding: EdgeInsets.zero,
         iconSize: 16,
-        icon: Icon(Icons.more_vert,
-            size: 16,
-            color: Theme.of(context).colorScheme.onSurfaceVariant),
+        tooltip: 'More',
+        icon: Icon(Icons.more_vert, size: 16, color: cs.onSurfaceVariant),
         onSelected: (action) => _handle(context, ref, action),
         itemBuilder: (_) => [
-          // Recurring (virtual) occurrences only offer "Stop repeating" — the
-          // pattern is edited from the source request's repeat toggle, and a
-          // single week is changed by adding a one-off request for that date.
-          if (isRecurring)
-            const PopupMenuItem(
-              value: _MenuAction.stopRepeating,
-              child: ListTile(
-                leading: Icon(Icons.event_repeat_outlined, color: Colors.red),
-                title: Text('Stop repeating',
-                    style: TextStyle(color: Colors.red)),
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-              ),
+          if (custodyGroup != null)
+            PopupMenuItem(
+              value: _MenuAction.cancelCustody,
+              child: item(Icons.event_busy_outlined,
+                  custodyGroup!.isSwap ? 'Cancel swap' : 'Cancel agreement',
+                  destructive: true),
             ),
-          if (!isRecurring && (isRule || isAdhocOverride || isCustodyEvent))
-            const PopupMenuItem(
-              value: _MenuAction.edit,
-              child: ListTile(
-                leading: Icon(Icons.edit_outlined),
-                title: Text('Edit'),
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-              ),
-            ),
-          if (!isRecurring && isNonAdhocOverride)
-            const PopupMenuItem(
-              value: _MenuAction.removeOverride,
-              child: ListTile(
-                leading: Icon(Icons.undo_outlined),
-                title: Text('Remove override'),
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-              ),
-            ),
-          if (!isRecurring)
-            const PopupMenuItem(
-              value: _MenuAction.delete,
-              child: ListTile(
-                leading: Icon(Icons.delete_outline, color: Colors.red),
-                title: Text('Delete', style: TextStyle(color: Colors.red)),
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-              ),
-            ),
+          if (isRule || isOneOff)
+            PopupMenuItem(
+                value: _MenuAction.edit, child: item(Icons.edit_outlined, 'Edit')),
+          if (isOverride)
+            PopupMenuItem(
+                value: _MenuAction.removeOverride,
+                child: item(Icons.undo_outlined, 'Remove override')),
+          if (isRule || isOneOff)
+            PopupMenuItem(
+                value: _MenuAction.delete,
+                child: item(Icons.delete_outline, 'Delete', destructive: true)),
         ],
       ),
     );
@@ -365,138 +263,99 @@ class _EventMenu extends ConsumerWidget {
 
   Future<void> _handle(
       BuildContext context, WidgetRef ref, _MenuAction action) async {
-    // ── Recurring (virtual) occurrences ───────────────────────────────────────
-    if (event.recurringId != null) {
-      if (action == _MenuAction.stopRepeating) {
-        final confirm = await confirmDialog(
-          context,
-          title: 'Stop repeating?',
-          body: 'Removes this standing arrangement from all future weeks. '
-              'Past occurrences already recorded are kept.',
-          action: 'Stop',
-          destructive: true,
-        );
-        if (confirm && context.mounted) {
-          await ref
-              .read(recurringArrangementsNotifierProvider.notifier)
-              .delete(event.recurringId!);
-        }
+    try {
+      switch (action) {
+        case _MenuAction.cancelCustody:
+          final group = custodyGroup!;
+          final other = ref
+                  .read(householdProvider)
+                  .valueOrNull
+                  ?.memberByUserId(group.requestedFrom)
+                  ?.displayName ??
+              'The other parent';
+          final ok = await confirmDialog(
+            context,
+            title: group.isSwap ? 'Cancel this swap?' : 'Cancel this agreement?',
+            body: '${group.isSwap ? 'Both days go' : 'The day goes'} back to '
+                'the normal schedule. $other will be notified.',
+            action: 'Cancel it',
+            cancel: 'Keep',
+            destructive: true,
+          );
+          if (ok) {
+            await ref.read(custodyRequestsProvider.notifier).deleteGroup(group);
+          }
+
+        case _MenuAction.edit:
+          await showAppSheet<void>(context,
+              builder: (_) => EventEditSheet(event: event));
+
+        case _MenuAction.removeOverride:
+          final ok = await confirmDialog(
+            context,
+            title: 'Remove override?',
+            body: 'This will revert the event to the base schedule for this day.',
+            action: 'Remove',
+            destructive: true,
+          );
+          if (ok) {
+            await ref
+                .read(manualOverridesNotifierProvider.notifier)
+                .delete(event.overrideId!);
+          }
+
+        case _MenuAction.delete:
+          final standing = event.ruleId != null && event.overrideId == null;
+          final ok = await confirmDialog(
+            context,
+            title: event.isExam ? 'Delete exam?' : 'Delete event?',
+            body: standing
+                ? 'This removes it from every week.'
+                : 'This removes it for everyone.',
+            action: 'Delete',
+            destructive: true,
+          );
+          if (!ok) return;
+          if (standing) {
+            await ref.read(baseRulesNotifierProvider.notifier).delete(event.ruleId!);
+          } else {
+            await ref
+                .read(manualOverridesNotifierProvider.notifier)
+                .delete(event.overrideId!);
+          }
       }
-      return;
-    }
-
-    // ── Custody request events ────────────────────────────────────────────────
-    if (event.custodyRequestId != null) {
-      final requests = ref.read(custodyRequestsProvider).valueOrNull ?? [];
-      final request = requests
-          .where((r) => r.id == event.custodyRequestId)
-          .firstOrNull;
-      if (request == null) return;
-
-      if (action == _MenuAction.edit) {
-        if (!context.mounted) return;
-        await showAppSheet<void>(context,
-            builder: (_) => CustodyRequestEditSheet(request: request));
-        return;
-      }
-      if (action == _MenuAction.delete) {
-        final confirm = await confirmDialog(
-          context,
-          title: 'Delete request?',
-          body: 'This removes the custody request and restores the original schedule.',
-          action: 'Delete',
-          destructive: true,
-        );
-        if (confirm && context.mounted) {
-          await ref
-              .read(custodyRequestsProvider.notifier)
-              .deleteRequest(event.custodyRequestId!);
-        }
-        return;
-      }
-    }
-
-    switch (action) {
-      case _MenuAction.stopRepeating:
-        // Handled above for recurring events; unreachable here.
-        return;
-
-      case _MenuAction.edit:
-        await showAppSheet<void>(context,
-            builder: (_) => EventEditSheet(event: event));
-
-      case _MenuAction.removeOverride:
-        final confirm = await confirmDialog(
-          context,
-          title: 'Remove override?',
-          body: 'This will revert the event to the base schedule for this day.',
-          action: 'Remove',
-          destructive: true,
-        );
-        if (confirm && context.mounted) {
-          await ref
-              .read(manualOverridesNotifierProvider.notifier)
-              .delete(event.overrideId!);
-        }
-
-      case _MenuAction.delete:
-        final label = event.ruleId != null && event.overrideId == null
-            ? 'Delete standing event?\n\nThis removes it from every future week.'
-            : 'Delete this event?';
-        final confirm = await confirmDialog(
-          context,
-          title: 'Delete event?',
-          body: label,
-          action: 'Delete',
-          destructive: true,
-        );
-        if (!confirm || !context.mounted) return;
-        if (event.overrideId != null) {
-          await ref
-              .read(manualOverridesNotifierProvider.notifier)
-              .delete(event.overrideId!);
-        } else if (event.ruleId != null) {
-          await ref
-              .read(baseRulesNotifierProvider.notifier)
-              .delete(event.ruleId!);
-        }
+    } catch (e) {
+      if (context.mounted) showErrorSnack(context, e);
     }
   }
-
 }
 
-enum _MenuAction { edit, delete, removeOverride, stopRepeating }
+class _Chip extends StatelessWidget {
+  final String label;
+  final IconData? icon;
+  final Color color;
 
-class _ChildChipRow extends StatelessWidget {
-  final String childName;
-  final AppColors colors;
-  const _ChildChipRow({required this.childName, required this.colors});
+  const _Chip({required this.label, required this.color, this.icon});
 
   @override
-  Widget build(BuildContext context) {
-    if (childName == 'All') {
-      // Don't show individual child chips for "All" — the parent colour
-      // already indicates ownership. Specific children are shown only when
-      // the event is for a single child.
-      return const SizedBox.shrink();
-    }
-    if (colors.isChildSpecific(childName)) {
-      return _chip(childName, colors.childColor(childName));
-    }
-    return const SizedBox.shrink();
-  }
-
-  Widget _chip(String name, Color color) => Container(
+  Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(6),
           border: Border.all(color: color.withValues(alpha: 0.4)),
         ),
-        child: Text(
-          name,
-          style: TextStyle(
-              fontSize: 10, color: color, fontWeight: FontWeight.w600),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 11, color: color),
+              const SizedBox(width: 3),
+            ],
+            Text(label,
+                style: TextStyle(
+                    fontSize: 10, color: color, fontWeight: FontWeight.w600)),
+          ],
         ),
       );
 }

@@ -6,91 +6,107 @@ import '../core/expense_categories.dart';
 import '../models/shared_expense.dart';
 import '../providers/expense_provider.dart';
 import '../providers/household_provider.dart';
+import '../providers/navigation_provider.dart';
+import '../widgets/common.dart';
+import '../widgets/need_sheet.dart';
 import '../widgets/skeleton.dart';
 import 'expense_detail_screen.dart';
 import 'expense_form_screen.dart';
+import 'needs_view.dart';
 
-/// Settle-up dialog: clears every unpaid split in both directions so one net
-/// payment settles the slate. Exposed so the app bar (shell) can offer it.
-void showSettleUpDialog(BuildContext context, WidgetRef ref) {
+/// Settle up: the parent who is owed on balance confirms they've been paid,
+/// which clears every outstanding split between the two of you. The parent
+/// who owes is told how it works instead (they can't clear their own debt).
+Future<void> showSettleUpDialog(BuildContext context, WidgetRef ref) async {
   final summary =
       ref.read(expenseSummaryProvider).valueOrNull ?? const ExpenseSummary();
+  final other = ref.read(coParentProvider)?.displayName ?? 'your co-parent';
+  final messenger = ScaffoldMessenger.of(context);
 
   if (summary.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Nothing outstanding to settle.')),
+    messenger.showSnackBar(
+        const SnackBar(content: Text('Nothing outstanding to settle.')));
+    return;
+  }
+
+  if (!summary.canSettle) {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Settle up'),
+        content: Text(
+            'You owe ${summary.netFormatted} on balance. Once you\'ve paid, '
+            '$other confirms it and everything between you is cleared.'),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('OK')),
+        ],
+      ),
     );
     return;
   }
 
-  final net = summary.netCents;
-  final netLine = net == 0
-      ? 'Both sides owe the same — settling clears everything.'
-      : net > 0
-          ? 'Net: you are owed ${summary.netFormatted}.'
-          : 'Net: you owe ${summary.netFormatted}.';
-
   final refCtrl = TextEditingController();
   final noteCtrl = TextEditingController();
+  final even = summary.netCents == 0;
 
-  showDialog(
+  final confirmed = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
-      title: const Text('Settle Up'),
+      title: const Text('Settle up'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Marks every outstanding split — in both directions — as paid. '
-            '$netLine',
-            style: const TextStyle(fontSize: 14),
-          ),
+          Text(even
+              ? 'You and $other owe each other the same. Settling clears '
+                'everything outstanding.'
+              : 'Confirm that $other has paid you ${summary.netFormatted}. '
+                'This clears every outstanding expense between you, in both '
+                'directions.'),
           const SizedBox(height: 12),
           TextField(
             controller: refCtrl,
             decoration: const InputDecoration(
-              labelText: 'Payment reference',
+              labelText: 'Payment reference (optional)',
               hintText: 'e.g. EFT ref',
             ),
           ),
           const SizedBox(height: 8),
           TextField(
             controller: noteCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Note (optional)',
-            ),
+            decoration: const InputDecoration(labelText: 'Note (optional)'),
           ),
         ],
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(ctx),
+          onPressed: () => Navigator.pop(ctx, false),
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () async {
-            Navigator.pop(ctx);
-            final result = await ref.read(expensesProvider.notifier).settleUpAll(
-                  reference: refCtrl.text.trim(),
-                  note: noteCtrl.text.trim(),
-                );
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                      'Settled ${result.count} split${result.count == 1 ? '' : 's'}'),
-                ),
-              );
-            }
-          },
-          child: const Text('Settle All'),
+          onPressed: () => Navigator.pop(ctx, true),
+          child: Text(even ? 'Settle' : 'Confirm received'),
         ),
       ],
     ),
   );
+  if (confirmed != true) return;
+
+  try {
+    final result = await ref.read(expensesProvider.notifier).settleUp(
+          reference: refCtrl.text.trim(),
+          note: noteCtrl.text.trim(),
+        );
+    messenger.showSnackBar(SnackBar(
+        content: Text(
+            'Settled ${result.count} split${result.count == 1 ? '' : 's'}')));
+  } catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text(friendlyError(e))));
+  }
 }
 
+/// The money tab: the shared "to buy" list and the expenses it turns into.
 class ExpensesScreen extends ConsumerStatefulWidget {
   const ExpensesScreen({super.key});
 
@@ -104,95 +120,132 @@ class _ExpensesScreenState extends ConsumerState<ExpensesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final expensesAsync = ref.watch(expensesProvider);
-    final children = ref.watch(householdProvider).valueOrNull?.children ?? [];
+    final view = ref.watch(expensesViewProvider);
+    final toBuy = view == ExpensesView.toBuy;
 
     return Scaffold(
       body: Column(
         children: [
-          // Filter chips
-          _FilterBar(
-            category: _categoryFilter,
-            child: _childFilter,
-            childNames: children.map((c) => c.name).toList(),
-            onCategoryChanged: (v) => setState(() => _categoryFilter = v),
-            onChildChanged: (v) => setState(() => _childFilter = v),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+            child: SizedBox(
+              width: double.infinity,
+              child: SegmentedButton<ExpensesView>(
+                segments: const [
+                  ButtonSegment(
+                    value: ExpensesView.toBuy,
+                    icon: Icon(Icons.shopping_bag_outlined),
+                    label: Text('To buy'),
+                  ),
+                  ButtonSegment(
+                    value: ExpensesView.expenses,
+                    icon: Icon(Icons.receipt_long_outlined),
+                    label: Text('Expenses'),
+                  ),
+                ],
+                selected: {view},
+                onSelectionChanged: (s) =>
+                    ref.read(expensesViewProvider.notifier).state = s.first,
+                style: SegmentedButton.styleFrom(
+                    visualDensity: VisualDensity.compact),
+              ),
+            ),
           ),
-          Expanded(
-            child: expensesAsync.when(
-              loading: () => const SkeletonList(count: 6, itemHeight: 72),
-              error: (e, _) => Center(child: Text('Error loading expenses: $e')),
-              data: (expenses) {
-                // Apply filters
-                var filtered = expenses.toList();
-                if (_categoryFilter != null) {
-                  filtered = filtered.where((e) => e.category == _categoryFilter).toList();
-                }
-                if (_childFilter != null) {
-                  filtered = filtered.where((e) => e.childName == _childFilter).toList();
-                }
+          Expanded(child: toBuy ? const NeedsView() : _buildExpenses(context)),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'expense_fab',
+        tooltip: toBuy ? 'Add to the list' : 'Add expense',
+        onPressed: () => toBuy
+            ? showAppSheet<void>(context, builder: (_) => const NeedSheet())
+            : Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ExpenseFormScreen()),
+              ),
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
 
-                final active  = filtered.where((e) => e.active).toList();
-                final settled = filtered.where((e) => !e.active).toList();
+  Widget _buildExpenses(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final expensesAsync = ref.watch(expensesProvider);
+    final children = ref.watch(householdProvider).valueOrNull?.children ?? [];
 
-                if (filtered.isEmpty) {
-                  return RefreshIndicator(
-                    onRefresh: () async => ref.invalidate(expensesProvider),
-                    child: ListView(
-                      children: const [
-                        SizedBox(height: 120),
-                        Center(
-                          child: Column(
-                            children: [
-                              Icon(Icons.account_balance_wallet_outlined,
-                                  size: 48, color: Colors.grey),
-                              SizedBox(height: 12),
-                              Text('No shared expenses yet.',
-                                  style: TextStyle(color: Colors.grey)),
-                              SizedBox(height: 4),
-                              Text('Tap + to add one.',
-                                  style: TextStyle(color: Colors.grey, fontSize: 12)),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }
+    Future<void> refresh() async {
+      ref.invalidate(expensesProvider);
+      ref.invalidate(expenseSummaryProvider);
+    }
 
+    return Column(
+      children: [
+        _FilterBar(
+          category: _categoryFilter,
+          child: _childFilter,
+          childNames: children.map((c) => c.name).toList(),
+          onCategoryChanged: (v) => setState(() => _categoryFilter = v),
+          onChildChanged: (v) => setState(() => _childFilter = v),
+        ),
+        Expanded(
+          child: expensesAsync.when(
+            skipLoadingOnReload: true,
+            loading: () => const SkeletonList(count: 6, itemHeight: 72),
+            error: (e, _) => Center(child: Text(friendlyError(e))),
+            data: (expenses) {
+              var filtered = expenses.toList();
+              if (_categoryFilter != null) {
+                filtered = filtered.where((e) => e.category == _categoryFilter).toList();
+              }
+              if (_childFilter != null) {
+                filtered = filtered.where((e) => e.childName == _childFilter).toList();
+              }
+
+              final active  = filtered.where((e) => e.active).toList();
+              final settled = filtered.where((e) => !e.active).toList();
+
+              if (filtered.isEmpty) {
                 return RefreshIndicator(
-                  onRefresh: () async => ref.invalidate(expensesProvider),
+                  onRefresh: refresh,
                   child: ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
                     children: [
-                      if (active.isNotEmpty) ...[
-                        _SectionHeader('Active (${active.length})'),
-                        ...active.map((e) => _ExpenseTile(expense: e)),
-                      ],
-                      if (settled.isNotEmpty) ...[
-                        const SizedBox(height: 16),
-                        _SectionHeader('Settled (${settled.length})'),
-                        ...settled.map((e) => _ExpenseTile(expense: e)),
-                      ],
+                      const SizedBox(height: 120),
+                      Icon(Icons.account_balance_wallet_outlined,
+                          size: 48, color: cs.onSurfaceVariant),
+                      const SizedBox(height: 12),
+                      Text('No shared expenses yet.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: cs.onSurfaceVariant)),
+                      const SizedBox(height: 4),
+                      Text('Tap + to add one.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
                     ],
                   ),
                 );
-              },
-            ),
+              }
+
+              return RefreshIndicator(
+                onRefresh: refresh,
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
+                  children: [
+                    if (active.isNotEmpty) ...[
+                      _SectionHeader('Active (${active.length})'),
+                      ...active.map((e) => _ExpenseTile(expense: e)),
+                    ],
+                    if (settled.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      _SectionHeader('Ended (${settled.length})'),
+                      ...settled.map((e) => _ExpenseTile(expense: e)),
+                    ],
+                  ],
+                ),
+              );
+            },
           ),
-        ],
-      ),
-      // Export and settle-up live in the app bar (see _MainShell) — a single
-      // FAB keeps the primary action obvious.
-      floatingActionButton: FloatingActionButton(
-        heroTag: 'expense_fab',
-        tooltip: 'Add expense',
-        onPressed: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const ExpenseFormScreen()),
         ),
-        child: const Icon(Icons.add),
-      ),
+      ],
     );
   }
 }
@@ -251,7 +304,7 @@ class _ExpenseTile extends StatelessWidget {
           ),
           trailing: expense.active
               ? null
-              : const Icon(Icons.check_circle, color: Colors.green, size: 20),
+              : Icon(Icons.check_circle, color: cs.onSurfaceVariant, size: 20),
           onTap: open,
         ),
       ),

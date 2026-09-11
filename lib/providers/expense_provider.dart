@@ -1,11 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:pocketbase/pocketbase.dart';
 
 import '../core/pb_client.dart';
 import '../models/expense_split.dart';
 import '../models/shared_expense.dart';
 import '../services/queue_service.dart';
 import '../utils/dates.dart';
+import '../utils/ids.dart';
 import 'auth_provider.dart';
 import 'household_provider.dart';
 import 'queue_count_provider.dart';
@@ -32,6 +34,9 @@ class ExpenseSummary {
   String get netFormatted => _rand(netCents.abs());
   bool get isEmpty => youOwe == 0 && owedToYou == 0;
 
+  /// Only the parent who is owed on balance confirms a settle-up.
+  bool get canSettle => !isEmpty && netCents >= 0;
+
   static String _rand(int cents) => 'R ${(cents / 100).toStringAsFixed(2)}';
 }
 
@@ -42,7 +47,6 @@ final expenseSummaryProvider = FutureProvider<ExpenseSummary>((ref) async {
   if (myId.isEmpty) return const ExpenseSummary();
 
   try {
-    // One fetch each — previously this did a getOne per split (N+1).
     final splitRecords = await pb.collection('expense_splits').getFullList(
       filter: 'status != "paid"',
     );
@@ -85,43 +89,23 @@ final expensesProvider =
 
 class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
   @override
-  Future<List<SharedExpense>> build() => _fetch();
-
-  Future<List<SharedExpense>> _fetch() async {
+  Future<List<SharedExpense>> build() async {
+    ref.watch(authProvider);
+    // Overdue marking runs server-side in the daily cron.
     final records = await pb.collection('shared_expenses').getFullList(
       sort: '-created',
     );
-
-    // Auto-detect overdue splits: if due_date < today and still pending, mark overdue
-    await _markOverdueSplits();
-
     return records
         .map((r) => SharedExpense.fromRecord(r.toJson()))
         .toList();
   }
 
-  /// Check all pending splits and mark as overdue if past due date.
-  Future<void> _markOverdueSplits() async {
-    try {
-      final todayStr = isoDate(DateTime.now());
-      final pendingSplits = await pb.collection('expense_splits').getFullList(
-        filter: 'status = "pending" && due_date != "" && due_date < "$todayStr"',
-      );
-      for (final s in pendingSplits) {
-        await pb.collection('expense_splits').update(s.id, body: {
-          'status': 'overdue',
-        });
-      }
-    } catch (_) {
-      // Non-critical — silently ignore
-    }
-  }
-
-  /// Create a new expense with a single split to the other parent.
-  /// Works offline: on a network error the expense+split is queued as one
-  /// logical op and synced when the connection returns. (The receipt photo
-  /// is only attached when online — files can't be queued.)
-  Future<void> createExpense({
+  /// Create a new expense with a single split to the other parent. Returns the
+  /// new expense id, or null when it was queued offline.
+  ///
+  /// Offline, the expense+split is queued as one logical op (client-generated
+  /// ids make the replay safe). The receipt photo is only attached online.
+  Future<String?> createExpense({
     required String title,
     String? description,
     required int amount,
@@ -145,10 +129,11 @@ class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
     }
 
     final myId = auth.userId ?? '';
-    final householdId = household.id;
+    final expenseId = newRecordId();
 
     final expenseBody = {
-      'household':    householdId,
+      'id':           expenseId,
+      'household':    household.id,
       'title':        title,
       'description':  description ?? '',
       'child_name':   childName,
@@ -167,7 +152,8 @@ class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
       'created_by':   myId,
     };
     final splitBody = {
-      'household':   householdId,
+      'id':          newRecordId(),
+      'household':   household.id,
       'user':        splitToUserId,
       'split_type':  'percentage',
       'split_value': splitPercent,
@@ -176,29 +162,40 @@ class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
       'due_date':    nextDueDate != null ? isoDate(nextDueDate) : '',
     };
 
+    var expenseCreated = false;
     try {
-      final expenseRecord = await pb.collection('shared_expenses').create(
+      await pb.collection('shared_expenses').create(
         body: expenseBody,
         files: receipt != null ? [receipt] : const [],
       );
+      expenseCreated = true;
       await pb.collection('expense_splits').create(
-          body: {...splitBody, 'expense': expenseRecord.id});
+          body: {...splitBody, 'expense': expenseId});
     } catch (e) {
-      if (!isNetworkError(e)) rethrow;
-      await QueueService.enqueue(PendingOp(
-        id:         QueueService.newOpId(),
-        collection: 'shared_expenses',
-        method:     'create',
-        body:       expenseBody,
-        splitBody:  splitBody,
-      ));
-      final count = await QueueService.pendingCount();
-      ref.read(pendingOpsCountProvider.notifier).state = count;
-      return;
+      if (isNetworkError(e)) {
+        await QueueService.enqueue(PendingOp(
+          id:         QueueService.newOpId(),
+          collection: 'shared_expenses',
+          method:     'create',
+          body:       expenseBody,
+          splitBody:  splitBody,
+        ));
+        ref.read(pendingOpsCountProvider.notifier).state =
+            await QueueService.pendingCount();
+        return null;
+      }
+      // Never leave an expense without its split.
+      if (expenseCreated) {
+        try {
+          await pb.collection('shared_expenses').delete(expenseId);
+        } catch (_) {}
+      }
+      rethrow;
     }
 
     ref.invalidateSelf();
     ref.invalidate(expenseSummaryProvider);
+    return expenseId;
   }
 
   /// Update an existing expense. Recalculates unpaid splits if amount changed.
@@ -217,9 +214,16 @@ class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
     DateTime? endDate,
     http.MultipartFile? receipt,
   }) async {
-    // Get old amount to check if splits need recalculating
     final old = await pb.collection('shared_expenses').getOne(expenseId);
     final oldAmount = (old.data['amount'] as num?)?.toInt() ?? 0;
+    final oldDueDay = (old.data['due_day'] as num?)?.toInt();
+    final oldRecurrence = old.data['recurrence'] as String? ?? '';
+
+    // Only move next_due_date when the schedule itself changed; recomputing it
+    // on every edit could re-create a split the cron already generated.
+    final scheduleChanged = isRecurring &&
+        (dueDay != oldDueDay || (recurrence ?? '') != oldRecurrence ||
+            (old.data['next_due_date'] as String? ?? '').isEmpty);
 
     await pb.collection('shared_expenses').update(
       expenseId,
@@ -233,13 +237,14 @@ class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
         'is_recurring': isRecurring,
         'recurrence':   recurrence ?? '',
         'due_day':      dueDay,
-        'next_due_date': nextDueDate != null ? isoDate(nextDueDate) : '',
+        if (!isRecurring) 'next_due_date': '',
+        if (scheduleChanged)
+          'next_due_date': nextDueDate != null ? isoDate(nextDueDate) : '',
         'end_date':     endDate != null ? isoDate(endDate) : '',
       },
       files: receipt != null ? [receipt] : const [],
     );
 
-    // Recalculate unpaid splits if amount changed
     if (amount != oldAmount) {
       final splits = await pb.collection('expense_splits').getFullList(
         filter: 'expense = "$expenseId" && status != "paid"',
@@ -260,7 +265,7 @@ class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
     ref.invalidate(expenseSummaryProvider);
   }
 
-  /// Mark a split as paid.
+  /// Confirm a split was paid (payer only — the server enforces it).
   Future<void> markSplitPaid(String splitId, {String? reference, String? note}) async {
     await pb.collection('expense_splits').update(splitId, body: {
       'status':            'paid',
@@ -270,42 +275,41 @@ class ExpensesNotifier extends AsyncNotifier<List<SharedExpense>> {
     });
     ref.invalidateSelf();
     ref.invalidate(expenseSummaryProvider);
+    ref.invalidate(expenseSplitsProvider);
   }
 
-  /// Settle up in both directions: marks every unpaid split in the household
-  /// as paid, so a single net payment clears the slate.
-  /// Returns the number of splits settled and the net amount (positive =
-  /// the other side owed the current user more than vice versa).
-  Future<({int count, int netCents})> settleUpAll({
+  /// Clears every unpaid split between the current user and the other parent
+  /// in both directions. Only the parent who is owed on balance may confirm
+  /// it; the server checks and notifies the other parent.
+  Future<({int count, int netCents})> settleUp({
     String? reference,
     String? note,
   }) async {
-    final myId = ref.read(authProvider).valueOrNull?.userId ?? '';
-    final splits = await pb.collection('expense_splits').getFullList(
-      filter: 'status != "paid"',
-    );
-    int net = 0;
-    for (final s in splits) {
-      final due = (s.data['amount_due'] as num?)?.toInt() ?? 0;
-      final user = s.data['user'] as String? ?? '';
-      // Splits owed by me reduce the net in my favour; splits owed by the
-      // other side increase it.
-      net += user == myId ? -due : due;
-      await pb.collection('expense_splits').update(s.id, body: {
-        'status':            'paid',
-        'paid_date':         isoDate(DateTime.now()),
-        'payment_reference': reference ?? '',
-        'payment_note':      note ?? '',
-      });
+    final hid = ref.read(householdProvider).valueOrNull?.id;
+    if (hid == null) throw Exception('No active household.');
+    try {
+      final res = await pb.send(
+        '/api/coplan/settle-up',
+        method: 'POST',
+        body: {'household': hid, 'reference': reference ?? '', 'note': note ?? ''},
+      );
+      ref.invalidateSelf();
+      ref.invalidate(expenseSummaryProvider);
+      return (
+        count: (res['count'] as num?)?.toInt() ?? 0,
+        netCents: (res['netCents'] as num?)?.toInt() ?? 0,
+      );
+    } on ClientException catch (e) {
+      final message = e.response['message'];
+      if (e.statusCode == 403 && message is String && message.isNotEmpty) {
+        throw Exception(message);
+      }
+      rethrow;
     }
-    ref.invalidateSelf();
-    ref.invalidate(expenseSummaryProvider);
-    return (count: splits.length, netCents: net);
   }
 
   /// Delete an expense and its splits.
   Future<void> deleteExpense(String expenseId) async {
-    // Delete associated splits first
     final splits = await pb.collection('expense_splits').getFullList(
       filter: 'expense = "$expenseId"',
     );

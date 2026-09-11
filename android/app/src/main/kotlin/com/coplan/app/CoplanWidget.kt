@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,8 +67,13 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
 
     // ── Shared colour helpers ─────────────────────────────────────────────────
 
-    private fun accentColor(parent: String): Color =
-        if (parent == "Bennet") Color(0xFF64B5F6) else Color(0xFFF48FB1)
+    /** The parent's colour as set in the app (sent as parentColorValue). */
+    private fun baseColor(event: WidgetEvent): Color =
+        event.parentColor?.let { Color(it) } ?: Color(0xFF90A4AE)
+
+    /** A lighter tint of the parent's colour that reads well on dark backgrounds. */
+    private fun accentColor(event: WidgetEvent): Color =
+        lerp(baseColor(event), Color.White, 0.35f)
 
     private fun buildSubtitle(event: WidgetEvent): String {
         val parts = mutableListOf<String>()
@@ -110,7 +116,7 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
 
     @Composable
     private fun Style1Row(event: WidgetEvent) {
-        val accent    = if (event.isDimmed) Color(0xFF616161) else accentColor(event.parent)
+        val accent    = if (event.isDimmed) Color(0xFF616161) else accentColor(event)
         val textColor = if (event.isDimmed) Color(0xFF757575) else Color(0xFFEEEEEE)
         val subColor  = Color(0xFF757575)
         Row(
@@ -215,12 +221,10 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
 
     @Composable
     private fun Style2Row(event: WidgetEvent) {
-        val isBennet  = event.parent == "Bennet"
-        val baseColor = if (event.isDimmed) Color(0xFF424242)
-                        else if (isBennet) Color(0xFF1565C0) else Color(0xFFD81B60)
-        val tokenBg   = baseColor.copy(alpha = 0.20f)
+        val base      = if (event.isDimmed) Color(0xFF424242) else baseColor(event)
+        val tokenBg   = base.copy(alpha = 0.20f)
         val tokenText = if (event.isDimmed) Color(0xFF757575)
-                        else if (isBennet) Color(0xFF90CAF9) else Color(0xFFF48FB1)
+                        else lerp(base, Color.White, 0.5f)
         val textColor = if (event.isDimmed) Color(0xFF757575) else Color(0xFFEEEEEE)
 
         Row(
@@ -315,7 +319,7 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
 
     @Composable
     private fun Style3Row(event: WidgetEvent, showLine: Boolean) {
-        val accent    = if (event.isDimmed) Color(0xFF616161) else accentColor(event.parent)
+        val accent    = if (event.isDimmed) Color(0xFF616161) else accentColor(event)
         val textColor = if (event.isDimmed) Color(0xFF757575) else null
         Row(
             modifier = GlanceModifier.fillMaxWidth(),
@@ -425,7 +429,8 @@ abstract class CoplanWidgetBase : GlanceAppWidget() {
                     location     = o.optString("location", ""),
                     childName    = o.optString("childName", ""),
                     parent       = o.optString("parent", ""),
-                    isDimmed  = o.optBoolean("dimmed", false)
+                    isDimmed     = o.optBoolean("dimmed", false),
+                    parentColor  = if (o.has("parentColorValue")) o.optLong("parentColorValue") else null
                 )
             }
         }.getOrElse { emptyList() }
@@ -438,5 +443,7 @@ data class WidgetEvent(
     val location: String,
     val childName: String,
     val parent: String,
-    val isDimmed: Boolean = false
+    val isDimmed: Boolean = false,
+    /** ARGB colour of the responsible parent, as chosen in the app. */
+    val parentColor: Long? = null
 )

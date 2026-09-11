@@ -73,10 +73,7 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
   }
 
   Future<String> _generateCsv() async {
-    final rules        = ref.read(baseRulesProvider).valueOrNull ?? const [];
-    final weekdayRules = ref.read(weekdayRulesProvider).valueOrNull ?? const [];
-    final recurring =
-        ref.read(recurringArrangementsProvider).valueOrNull ?? const [];
+    final rules = ref.read(baseRulesProvider).valueOrNull ?? const [];
     final allAbsences =
         ref.read(absencePeriodsProvider).valueOrNull ?? const [];
     final allHolidays =
@@ -106,8 +103,6 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
       baseRules:             rules,
       overrides:             allOverrides,
       custodyRequests:       allCustody,
-      weekdayRules:          weekdayRules,
-      recurringArrangements: recurring,
       absencePeriods:        allAbsences,
       holidayBlocks:         allHolidays,
     );
@@ -132,11 +127,13 @@ class _ExportScreenState extends ConsumerState<ExportScreen> {
         buf.writeln('$dateStr,$weekday,$dayOwner,,,,,,');
       } else {
         for (final e in events) {
-          final type = e.custodyRequestId != null
-              ? 'transfer'
-              : e.isAdhoc
-                  ? 'adhoc'
-                  : 'scheduled';
+          final type = e.isCustody
+              ? (e.swapGroup != null ? 'swap' : 'transfer')
+              : e.isExam
+                  ? 'exam'
+                  : e.isAdhoc
+                      ? 'one-off'
+                      : 'scheduled';
           buf.writeln(
             '$dateStr,$weekday,$dayOwner,${fmtTime(e.time)},'
             '${csvEscape(e.activity)},${csvEscape(e.childName)},'

@@ -15,7 +15,18 @@ import '../widgets/form_fields.dart';
 class ExpenseFormScreen extends ConsumerStatefulWidget {
   /// Pass an existing expense to edit; null = create new.
   final SharedExpense? existing;
-  const ExpenseFormScreen({super.key, this.existing});
+
+  /// Pre-fills a new expense, e.g. from a bought "to buy" item.
+  final String? prefillTitle;
+  final String? prefillChild;
+
+  /// Pops with the new expense id (or null when queued offline / editing).
+  const ExpenseFormScreen({
+    super.key,
+    this.existing,
+    this.prefillTitle,
+    this.prefillChild,
+  });
 
   @override
   ConsumerState<ExpenseFormScreen> createState() => _ExpenseFormScreenState();
@@ -55,6 +66,9 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
       _recurrence  = e.recurrence ?? 'monthly';
       _dueDay      = e.dueDay;
       _endDate     = e.endDate;
+    } else {
+      _titleCtrl.text = widget.prefillTitle ?? '';
+      _childName      = widget.prefillChild ?? 'All';
     }
   }
 
@@ -142,7 +156,8 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
 
             // Child
             DropdownButtonFormField<String>(
-              initialValue: _childName,
+              initialValue:
+                  children.any((c) => c.name == _childName) ? _childName : 'All',
               decoration: const InputDecoration(labelText: 'For child'),
               items: [
                 const DropdownMenuItem(value: 'All', child: Text('All children')),
@@ -308,6 +323,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
     }
 
     try {
+      String? createdId;
       if (_isEditing) {
         await ref.read(expensesProvider.notifier).updateExpense(
               expenseId: widget.existing!.id,
@@ -325,7 +341,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
               receipt: receiptFile,
             );
       } else {
-        await ref.read(expensesProvider.notifier).createExpense(
+        createdId = await ref.read(expensesProvider.notifier).createExpense(
               title: _titleCtrl.text.trim(),
               description: _descCtrl.text.trim(),
               amount: amountCents,
@@ -344,7 +360,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
             );
       }
 
-      if (mounted) Navigator.pop(context);
+      if (mounted) Navigator.pop(context, createdId);
     } catch (e) {
       if (mounted) showErrorSnack(context, e);
     } finally {

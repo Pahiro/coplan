@@ -23,7 +23,8 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: master
+          channel: stable
+          flutter-version: 3.47.1
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -34,8 +35,37 @@ jobs:
           key: gradle-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-
 
+      # The signing key and Firebase config are not in the (public) repo. They
+      # come from repository secrets — see README → "CI secrets". The keystore
+      # must be the one existing installs were signed with.
+      - name: Restore signing key and Firebase config
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          for v in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD GOOGLE_SERVICES_JSON; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Missing repository secret $v (see README → CI secrets)"
+              exit 1
+            fi
+          done
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/upload.keystore
+          echo "$GOOGLE_SERVICES_JSON" | base64 -d > android/app/google-services.json
+          cat > android/key.properties <<EOF
+          storeFile=upload.keystore
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          EOF
+
       - name: Get dependencies
         run: flutter pub get
+
+      - name: Test
+        run: flutter test
 
       # Releases are tagged from the pubspec version (e.g. v3.0.0), so pushes
       # without a version bump update the existing release instead of piling

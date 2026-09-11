@@ -6,7 +6,6 @@ import 'package:pocketbase/pocketbase.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _kQueueKey = 'pending_ops_v1';
-const _kOtherParentKey = 'other_parent_id';
 
 class PendingOp {
   final String id;
@@ -56,6 +55,15 @@ bool isNetworkError(Object e) =>
     e is HandshakeException ||
     e is TimeoutException;
 
+/// True when a create failed because a record with the submitted id already
+/// exists — i.e. an earlier attempt reached the server.
+bool isDuplicateIdError(Object e) {
+  if (e is! ClientException || e.statusCode != 400) return false;
+  final data = e.response['data'];
+  return data is Map && data['id'] is Map &&
+      (data['id'] as Map)['code'] == 'validation_invalid_id';
+}
+
 class QueueService {
   QueueService._();
 
@@ -83,8 +91,9 @@ class QueueService {
     await _save(ops);
   }
 
-  /// Attempts to send all queued ops in order.
-  /// Returns the number successfully sent.
+  /// Attempts to send all queued ops in order. Ops stay queued only while the
+  /// server is unreachable; anything the server rejects would fail forever
+  /// and is dropped. Returns the number successfully sent.
   static Future<int> flush(PocketBase pb) async {
     final ops = await load();
     if (ops.isEmpty) return 0;
@@ -95,10 +104,10 @@ class QueueService {
     for (final op in ops) {
       try {
         if (op.method == 'create') {
-          final rec = await pb.collection(op.collection).create(body: op.body);
+          final id = await createIdempotent(pb, op.collection, op.body);
           if (op.splitBody != null) {
-            await pb.collection('expense_splits').create(
-                body: {...op.splitBody!, 'expense': rec.id});
+            await createIdempotent(
+                pb, 'expense_splits', {...op.splitBody!, 'expense': id});
           }
         } else {
           await pb
@@ -106,8 +115,8 @@ class QueueService {
               .update(op.recordId!, body: op.body);
         }
         flushed++;
-      } catch (_) {
-        remaining.add(op);
+      } catch (e) {
+        if (isNetworkError(e)) remaining.add(op);
       }
     }
 
@@ -115,14 +124,18 @@ class QueueService {
     return flushed;
   }
 
-  static Future<void> saveOtherParentId(String id) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kOtherParentKey, id);
-  }
-
-  static Future<String?> loadOtherParentId() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_kOtherParentKey);
+  /// Creates a record and returns its id, treating "id already exists" as
+  /// success when [body] carries a client-generated id.
+  static Future<String> createIdempotent(
+      PocketBase pb, String collection, Map<String, dynamic> body) async {
+    try {
+      final rec = await pb.collection(collection).create(body: body);
+      return rec.id;
+    } catch (e) {
+      final id = body['id'] as String?;
+      if (id != null && isDuplicateIdError(e)) return id;
+      rethrow;
+    }
   }
 
   static String newOpId() =>

@@ -298,3 +298,24 @@ final householdChildNamesProvider = Provider<List<HouseholdChild>>((ref) {
   final household = ref.watch(householdProvider).valueOrNull;
   return household?.children ?? const [];
 });
+
+/// The current user's display name in the active household — the name that
+/// schedule records (requests, absences, rotation) use. Falls back to the
+/// account name before the household loads.
+final myDisplayNameProvider = Provider<String>((ref) {
+  final auth      = ref.watch(authProvider).valueOrNull;
+  final household = ref.watch(householdProvider).valueOrNull;
+  final member    = household?.memberByUserId(auth?.userId ?? '');
+  return member?.displayName ?? auth?.userName?.trim() ?? 'Me';
+});
+
+/// The other parent in the active household, or null until they've joined.
+final coParentProvider = Provider<HouseholdMember?>((ref) {
+  final myId = ref.watch(authProvider).valueOrNull?.userId ?? '';
+  return ref
+      .watch(householdProvider)
+      .valueOrNull
+      ?.parents
+      .where((m) => m.userId != myId)
+      .firstOrNull;
+});

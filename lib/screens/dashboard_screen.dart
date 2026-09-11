@@ -1,4 +1,3 @@
-import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -9,54 +8,37 @@ import '../providers/absence_provider.dart';
 import '../providers/colors_provider.dart';
 import '../providers/custody_provider.dart';
 import '../providers/expense_provider.dart';
+import '../providers/navigation_provider.dart';
+import '../providers/needs_provider.dart';
+import '../providers/refresh.dart';
 import '../providers/schedule_provider.dart';
 import '../providers/update_provider.dart';
 import '../services/notification_service.dart';
 import '../services/update_service.dart';
-import '../services/widget_cache_service.dart';
 import '../utils/dates.dart';
 import '../widgets/absence_banner.dart';
+import '../widgets/common.dart';
+import '../widgets/custody_request_tile.dart';
 import '../widgets/motion.dart';
 import '../widgets/new_action_sheet.dart';
 import '../widgets/skeleton.dart';
 import '../widgets/timeline_card.dart';
+import 'expenses_screen.dart';
+import 'requests_screen.dart';
 
-class DashboardScreen extends ConsumerStatefulWidget {
+class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
 
-  @override
-  ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
-}
-
-class _DashboardScreenState extends ConsumerState<DashboardScreen>
-    with WidgetsBindingObserver {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    WidgetCacheService.updateCache();
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) WidgetCacheService.updateCache();
-  }
-
-  Future<void> _refresh() async {
-    ref.invalidate(dashboardProvider);
-    ref.invalidate(custodyRequestsProvider);
+  Future<void> _refresh(WidgetRef ref) async {
+    refreshAppData(ref.invalidate);
     ref.invalidate(updateProvider); // re-check for a newer build
-    await WidgetCacheService.updateCache();
+    await ref
+        .read(dashboardProvider.future)
+        .catchError((_) => const <ResolvedEvent>[]);
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final dashboard = ref.watch(dashboardProvider);
 
     return Scaffold(
@@ -66,11 +48,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
           const _BatteryBanner(),
           Expanded(
             child: RefreshIndicator(
-              onRefresh: _refresh,
+              onRefresh: () => _refresh(ref),
               child: dashboard.when(
+                skipLoadingOnReload: true,
                 loading: () => const SkeletonList(count: 5, itemHeight: 84),
-                error: (e, _) =>
-                    Center(child: Text('Error loading schedule: $e')),
+                error: (e, _) => ListView(children: [
+                  Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Text(friendlyError(e), textAlign: TextAlign.center),
+                  ),
+                ]),
                 data: (events) => _ScheduleList(events: events),
               ),
             ),
@@ -94,8 +81,8 @@ class _ScheduleList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final today    = DateTime.now();
-    final tomorrow = today.add(const Duration(days: 1));
+    final today    = ref.watch(todayProvider);
+    final tomorrow = addDays(today, 1);
     final absences = ref.watch(absencePeriodsProvider).valueOrNull ?? [];
 
     final todayAbsence    = absences.where((a) => a.coversDate(today)).firstOrNull;
@@ -113,7 +100,8 @@ class _ScheduleList extends ConsumerWidget {
         child: ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
       children: [
-        item(const _ExpenseSummaryCard()),
+        item(const _PendingRequestsCard()),
+        item(const _MoneyCard()),
         item(_SectionLabel(
             'Today — ${DateFormat('EEEE, d MMMM').format(today)}',
             date: today)),
@@ -134,6 +122,57 @@ class _ScheduleList extends ConsumerWidget {
           ...tomorrowEvents.map((e) => item(TimelineCard(event: e))),
       ],
     ));
+  }
+}
+
+/// Requests addressed to the current user that still need an answer — the
+/// most important action in the app, so it sits at the top of Today.
+class _PendingRequestsCard extends ConsumerWidget {
+  const _PendingRequestsCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pending = ref.watch(pendingForMeProvider);
+    if (pending.isEmpty) return const SizedBox.shrink();
+    final shown = pending.take(2).toList();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  pending.length == 1
+                      ? 'Waiting for your answer'
+                      : '${pending.length} requests waiting for your answer',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+              ),
+              if (pending.length > shown.length)
+                TextButton(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const RequestsScreen()),
+                  ),
+                  child: const Text('See all'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (final group in shown)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: CustodyRequestTile(group: group),
+            ),
+        ],
+      ),
+    );
   }
 }
 
@@ -193,24 +232,32 @@ class _EmptySlot extends StatelessWidget {
   const _EmptySlot();
 
   @override
-  Widget build(BuildContext context) => const Card(
+  Widget build(BuildContext context) => Card(
         child: Padding(
-          padding: EdgeInsets.all(16),
+          padding: const EdgeInsets.all(16),
           child: Text('No events scheduled',
-              style: TextStyle(color: Colors.grey)),
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ),
       );
 }
 
-// ── Expense summary card ──────────────────────────────────────────────────────
+// ── Money & to-buy summary ────────────────────────────────────────────────────
 
-class _ExpenseSummaryCard extends ConsumerWidget {
-  const _ExpenseSummaryCard();
+class _MoneyCard extends ConsumerWidget {
+  const _MoneyCard();
+
+  void _open(WidgetRef ref, ExpensesView view) {
+    ref.read(expensesViewProvider.notifier).state = view;
+    ref.read(shellTabProvider.notifier).state = 2;
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final summary = ref.watch(expenseSummaryProvider).valueOrNull;
-    if (summary == null || summary.isEmpty) return const SizedBox.shrink();
+    final summary = ref.watch(expenseSummaryProvider).valueOrNull ??
+        const ExpenseSummary();
+    final toBuy = ref.watch(openNeedsCountProvider);
+    if (summary.isEmpty && toBuy == 0) return const SizedBox.shrink();
 
     final cs = Theme.of(context).colorScheme;
     final positive = Theme.of(context).brightness == Brightness.dark
@@ -220,54 +267,92 @@ class _ExpenseSummaryCard extends ConsumerWidget {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            Icon(Icons.account_balance_wallet_outlined,
-                size: 22, color: cs.primary),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Net first — the number one actually settles. Counts
-                  // up/down to its new value when the balance changes.
-                  if (net != 0)
-                    TweenAnimationBuilder<double>(
-                      tween: Tween(begin: 0, end: net.abs() / 100),
-                      duration: const Duration(milliseconds: 600),
-                      curve: Curves.easeOutCubic,
-                      builder: (_, value, __) => Text(
-                        net > 0
-                            ? 'Net: you are owed R ${value.toStringAsFixed(2)}'
-                            : 'Net: you owe R ${value.toStringAsFixed(2)}',
-                        style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: net > 0 ? positive : cs.error),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          if (!summary.isEmpty)
+            InkWell(
+              onTap: () => _open(ref, ExpensesView.expenses),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+                child: Row(
+                  children: [
+                    Icon(Icons.account_balance_wallet_outlined,
+                        size: 22, color: cs.primary),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (net != 0)
+                            TweenAnimationBuilder<double>(
+                              tween: Tween(begin: 0, end: net.abs() / 100),
+                              duration: const Duration(milliseconds: 600),
+                              curve: Curves.easeOutCubic,
+                              builder: (_, value, __) => Text(
+                                net > 0
+                                    ? 'Net: you are owed R ${value.toStringAsFixed(2)}'
+                                    : 'Net: you owe R ${value.toStringAsFixed(2)}',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    color: net > 0 ? positive : cs.error),
+                              ),
+                            )
+                          else
+                            const Text('Net: all square',
+                                style: TextStyle(
+                                    fontSize: 13, fontWeight: FontWeight.bold)),
+                          if (summary.owedToYou > 0 && summary.youOwe > 0)
+                            Text(
+                              'Owed to you ${summary.owedToYouFormatted} · '
+                              'you owe ${summary.youOweFormatted}',
+                              style: TextStyle(
+                                  fontSize: 11, color: cs.onSurfaceVariant),
+                            ),
+                          if (summary.overdueCount > 0)
+                            Text('${summary.overdueCount} overdue',
+                                style: TextStyle(fontSize: 11, color: cs.error)),
+                        ],
                       ),
                     ),
-                  if (summary.owedToYou > 0 && summary.youOwe > 0)
-                    Text(
-                      'Owed to you ${summary.owedToYouFormatted} · '
-                      'you owe ${summary.youOweFormatted}',
-                      style: TextStyle(
-                          fontSize: 11, color: cs.onSurfaceVariant),
-                    ),
-                  if (summary.overdueCount > 0)
-                    Text('${summary.overdueCount} overdue',
-                        style: TextStyle(fontSize: 11, color: cs.error)),
-                ],
+                    if (summary.canSettle)
+                      TextButton(
+                        onPressed: () => showSettleUpDialog(context, ref),
+                        child: const Text('Settle up'),
+                      ),
+                  ],
+                ),
               ),
             ),
-          ],
-        ),
+          if (!summary.isEmpty && toBuy > 0) const Divider(height: 1),
+          if (toBuy > 0)
+            InkWell(
+              onTap: () => _open(ref, ExpensesView.toBuy),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                child: Row(
+                  children: [
+                    Icon(Icons.shopping_bag_outlined,
+                        size: 22, color: cs.primary),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        toBuy == 1 ? '1 thing to buy' : '$toBuy things to buy',
+                        style: const TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
+                  ],
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
 }
-
 
 // ── Battery optimisation banner ───────────────────────────────────────────────
 //
@@ -313,7 +398,6 @@ class _BatteryBannerState extends State<_BatteryBanner>
 
   @override
   Widget build(BuildContext context) {
-    // Show only when battery optimisation is confirmed ON and not dismissed.
     if (_optimized != true || _dismissed) return const SizedBox.shrink();
 
     final theme = Theme.of(context);
@@ -345,9 +429,6 @@ class _BatteryBannerState extends State<_BatteryBanner>
                 ),
                 onPressed: () async {
                   await NotificationService.requestBatteryExemption();
-                  // The system dialog will resume the app — didChangeAppLifecycleState
-                  // will re-check. Dismiss immediately so the banner goes away if
-                  // the user granted the exemption or chose to ignore it.
                   setState(() => _dismissed = true);
                 },
                 child: const Text('Fix', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -463,11 +544,10 @@ class _UpdateSheetState extends State<_UpdateSheet> {
       );
       setState(() => _installing = true);
       await UpdateService.install(file);
-      // The system installer is now in the foreground; close the sheet.
       if (mounted) Navigator.pop(context);
     } catch (e) {
       setState(() {
-        _error = '$e';
+        _error = friendlyError(e);
         _progress = null;
         _installing = false;
       });
@@ -476,6 +556,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: EdgeInsets.only(
         left: 24, right: 24, top: 24,
@@ -517,8 +598,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
             ),
           ],
           if (_error != null) ...[
-            Text(_error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            Text(_error!, style: TextStyle(color: cs.error)),
             const SizedBox(height: 12),
           ],
           const SizedBox(height: 8),
@@ -537,11 +617,10 @@ class _UpdateSheetState extends State<_UpdateSheet> {
             style: Theme.of(context)
                 .textTheme
                 .bodySmall
-                ?.copyWith(color: Colors.grey),
+                ?.copyWith(color: cs.onSurfaceVariant),
           ),
         ],
       ),
     );
   }
 }
-

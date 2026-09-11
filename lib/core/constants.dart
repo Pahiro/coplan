@@ -9,16 +9,6 @@ class AppConstants {
     defaultValue: 'http://localhost:8090',
   );
 
-  /// Base URL of your ntfy instance.
-  static const String ntfyBaseUrl = String.fromEnvironment(
-    'NTFY_URL',
-    defaultValue: 'https://ntfy.yourserver.com',
-  );
-
-  // ── People (legacy fallback only) ──────────────────────────────────────────
-  static const String parentBennet = 'Bennet';
-  static const String parentJana = 'Jana';
-
   // ── Android widget ──────────────────────────────────────────────────────────
   static const String widgetCacheKey = 'coplan_widget_events';
   static const String widgetAppId = 'com.coplan.app';

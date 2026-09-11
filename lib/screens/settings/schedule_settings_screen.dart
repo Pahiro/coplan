@@ -82,11 +82,12 @@ class ScheduleSettingsScreen extends ConsumerWidget {
             ),
           ] else ...[
             Text(
-              'Rotation cycle start, pattern, and standing weekday rules.',
+              'Rotation cycle start, pattern, and weekly handover times. '
+              'For one-off changes, send a request — or swap days — instead.',
               style: Theme.of(context)
                   .textTheme
                   .bodySmall
-                  ?.copyWith(color: Colors.grey),
+                  ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: 8),
             const _RotationAnchorCard(),
@@ -95,16 +96,6 @@ class ScheduleSettingsScreen extends ConsumerWidget {
             const SizedBox(height: 8),
             const _HandoverSetupCard(),
             const SizedBox(height: 16),
-            Text(
-              'Weekday rules — standing day-of-week custody overrides created '
-              'via the "Repeat every …" toggle on a request.',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: Colors.grey),
-            ),
-            const SizedBox(height: 8),
-            const _RecurringRulesSection(),
           ],
         ],
       ),
@@ -505,107 +496,3 @@ class _HandoverSetupCardState extends ConsumerState<_HandoverSetupCard> {
   }
 }
 
-// ── Recurring weekday rules ───────────────────────────────────────────────────
-
-class _RecurringRulesSection extends ConsumerWidget {
-  const _RecurringRulesSection();
-
-  static String _dayName(int dow) {
-    // dow: 1=Monday … 7=Sunday (ISO); Jan 1 2024 was a Monday.
-    final date = DateTime(2024, 1, 1).add(Duration(days: dow - 1));
-    return DateFormat('EEEE').format(date);
-  }
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final colors     = ref.watch(colorsProvider).valueOrNull ?? const AppColors();
-    final rulesAsync = ref.watch(weekdayRulesProvider);
-    return rulesAsync.when(
-      loading: () => const LinearProgressIndicator(),
-      error: (e, _) =>
-          Text('Could not load rules: $e', style: const TextStyle(color: Colors.red)),
-      data: (rules) {
-        final active = rules.where((r) => r.active).toList()
-          ..sort((a, b) => a.dayOfWeek.compareTo(b.dayOfWeek));
-
-        if (active.isEmpty) {
-          return const Card(
-            margin: EdgeInsets.only(bottom: 16),
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('No recurring rules — use the "Repeat every …" toggle '
-                  'when creating a pickup or drop-off request.',
-                  style: TextStyle(color: Colors.grey)),
-            ),
-          );
-        }
-
-        return Card(
-          margin: const EdgeInsets.only(bottom: 16),
-          child: Column(
-            children: active.map((rule) {
-              return ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: colors.parentLightColor(rule.assignedParent),
-                  child: Text(
-                    rule.assignedParent[0],
-                    style: TextStyle(
-                      color: colors.parentColor(rule.assignedParent),
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                title: Text(_dayName(rule.dayOfWeek)),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('${rule.assignedParent} has the kids'),
-                    if (rule.endDate != null)
-                      Text('Until ${fmtDateLong(rule.endDate!)}',
-                          style: const TextStyle(
-                              fontSize: 11, color: Colors.grey)),
-                    if (rule.reason.isNotEmpty)
-                      Text(rule.reason,
-                          style: const TextStyle(
-                              fontSize: 11, color: Colors.grey)),
-                  ],
-                ),
-                isThreeLine: rule.reason.isNotEmpty || rule.endDate != null,
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline, color: Colors.red),
-                  tooltip: 'Remove standing rule',
-                  onPressed: () async {
-                    final confirmed = await showDialog<bool>(
-                      context: context,
-                      builder: (_) => AlertDialog(
-                        title: Text(
-                            'Remove ${_dayName(rule.dayOfWeek)} rule?'),
-                        content: Text(
-                            '${rule.assignedParent} will no longer automatically '
-                            'have the kids every ${_dayName(rule.dayOfWeek)}. '
-                            'The week rotation will apply instead.'),
-                        actions: [
-                          TextButton(
-                              onPressed: () => Navigator.pop(context, false),
-                              child: const Text('Cancel')),
-                          FilledButton(
-                              onPressed: () => Navigator.pop(context, true),
-                              child: const Text('Remove')),
-                        ],
-                      ),
-                    );
-                    if (confirmed == true) {
-                      await ref
-                          .read(weekdayRulesNotifierProvider.notifier)
-                          .delete(rule.id);
-                    }
-                  },
-                ),
-              );
-            }).toList(),
-          ),
-        );
-      },
-    );
-  }
-}

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../providers/auth_provider.dart';
+import '../models/custody_request.dart';
 import '../providers/custody_provider.dart';
+import '../utils/dates.dart';
+import '../widgets/common.dart';
 import '../widgets/custody_request_tile.dart';
 
 enum _RequestsView { upcoming, past }
@@ -19,32 +21,36 @@ class _RequestsScreenState extends ConsumerState<RequestsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     final requestsAsync = ref.watch(custodyRequestsProvider);
-    final myId = ref.watch(authProvider).valueOrNull?.userId ?? '';
 
-    Future<void> refresh() async => ref.invalidate(custodyRequestsProvider);
+    Future<void> refresh() async {
+      ref.invalidate(custodyRequestsProvider);
+      await ref
+          .read(custodyRequestsProvider.future)
+          .catchError((_) => const <CustodyRequest>[]);
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Requests')),
       body: requestsAsync.when(
+        skipLoadingOnReload: true,
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => const Center(child: Text('Error loading requests')),
+        error: (e, _) => Center(child: Text(friendlyError(e))),
         data: (allRequests) {
           // Upcoming is the action list (soonest first); Past is the history
-          // of what was agreed (most recent first). Standing recurring
-          // arrangements never appear here — future occurrences are expanded
-          // virtually and past ones are frozen with a past date.
-          final now   = DateTime.now();
-          final today = DateTime(now.year, now.month, now.day);
+          // of what was agreed (most recent first). A swap is one entry and
+          // stays upcoming until both of its days have passed.
+          final today = dateOnly(DateTime.now());
           final upcoming = _view == _RequestsView.upcoming;
-          final requests = allRequests
-              .where((r) => upcoming
-                  ? !r.date.isBefore(today)
-                  : r.date.isBefore(today))
+          final groups = groupRequests(allRequests)
+              .where((g) => upcoming
+                  ? !g.lastDate.isBefore(today)
+                  : g.lastDate.isBefore(today))
               .toList()
             ..sort((a, b) => upcoming
-                ? a.date.compareTo(b.date)
-                : b.date.compareTo(a.date));
+                ? a.firstDate.compareTo(b.firstDate)
+                : b.lastDate.compareTo(a.lastDate));
 
           return Column(
             children: [
@@ -70,33 +76,31 @@ class _RequestsScreenState extends ConsumerState<RequestsScreen> {
                 ),
               ),
               Expanded(
-                child: requests.isEmpty
-                    ? RefreshIndicator(
-                        onRefresh: refresh,
-                        child: ListView(
+                child: RefreshIndicator(
+                  onRefresh: refresh,
+                  child: groups.isEmpty
+                      ? ListView(
                           children: [
                             const SizedBox(height: 120),
                             Center(
-                                child: Text(
-                                    upcoming
-                                        ? 'No upcoming requests.'
-                                        : 'No past requests.',
-                                    style:
-                                        const TextStyle(color: Colors.grey))),
+                              child: Text(
+                                upcoming
+                                    ? 'No upcoming requests.'
+                                    : 'No past requests.',
+                                style: TextStyle(color: cs.onSurfaceVariant),
+                              ),
+                            ),
                           ],
-                        ),
-                      )
-                    : RefreshIndicator(
-                        onRefresh: refresh,
-                        child: ListView.separated(
+                        )
+                      : ListView.separated(
                           padding: const EdgeInsets.all(16),
-                          itemCount: requests.length,
+                          itemCount: groups.length,
                           separatorBuilder: (_, __) =>
                               const SizedBox(height: 8),
-                          itemBuilder: (_, i) => CustodyRequestTile(
-                              request: requests[i], myId: myId),
+                          itemBuilder: (_, i) =>
+                              CustodyRequestTile(group: groups[i]),
                         ),
-                      ),
+                ),
               ),
             ],
           );

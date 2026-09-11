@@ -3,10 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../models/resolved_event.dart';
 import '../providers/absence_provider.dart';
+import '../providers/refresh.dart';
 import '../providers/schedule_provider.dart';
 import '../utils/dates.dart';
 import '../widgets/absence_banner.dart';
+import '../widgets/common.dart';
 import '../widgets/month_grid.dart';
 import '../widgets/motion.dart';
 import '../widgets/new_action_sheet.dart';
@@ -31,35 +34,37 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
   @override
   void initState() {
     super.initState();
-    _selectedDay = DateTime.now();
+    _selectedDay = dateOnly(DateTime.now());
   }
 
   // ── Navigation ────────────────────────────────────────────────────────────
 
   void _prev() => setState(() {
         _navReverse = true;
-        if (_viewMode == _ViewMode.week) {
-          _selectedDay = _selectedDay.subtract(const Duration(days: 7));
-        } else {
-          _selectedDay =
-              DateTime(_selectedDay.year, _selectedDay.month - 1, 1);
-        }
+        _selectedDay = _viewMode == _ViewMode.week
+            ? addDays(_selectedDay, -7)
+            : DateTime(_selectedDay.year, _selectedDay.month - 1, 1);
       });
 
   void _next() => setState(() {
         _navReverse = false;
-        if (_viewMode == _ViewMode.week) {
-          _selectedDay = _selectedDay.add(const Duration(days: 7));
-        } else {
-          _selectedDay =
-              DateTime(_selectedDay.year, _selectedDay.month + 1, 1);
-        }
+        _selectedDay = _viewMode == _ViewMode.week
+            ? addDays(_selectedDay, 7)
+            : DateTime(_selectedDay.year, _selectedDay.month + 1, 1);
       });
 
   void _goToToday() => setState(() {
-        _navReverse = DateTime.now().isBefore(_selectedDay);
-        _selectedDay = DateTime.now();
+        final today = dateOnly(DateTime.now());
+        _navReverse = today.isBefore(_selectedDay);
+        _selectedDay = today;
       });
+
+  Future<void> _refresh(DateTime monday) async {
+    refreshAppData(ref.invalidate);
+    await ref
+        .read(weekEventsProvider(monday).future)
+        .catchError((_) => const <String, List<ResolvedEvent>>{});
+  }
 
   // ── Labels ───────────────────────────────────────────────────────────────
 
@@ -68,7 +73,7 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
       return DateFormat('MMMM yyyy').format(_selectedDay);
     }
     final monday = weekMonday(_selectedDay);
-    final sunday = monday.add(const Duration(days: 6));
+    final sunday = addDays(monday, 6);
     return '${DateFormat('d MMM').format(monday)} – '
         '${DateFormat('d MMM yyyy').format(sunday)}';
   }
@@ -88,6 +93,7 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final cs         = Theme.of(context).colorScheme;
     final monday     = weekMonday(_selectedDay);
     final weekEvents = ref.watch(weekEventsProvider(monday));
     final selectedEvents = weekEvents.valueOrNull?[isoDate(_selectedDay)] ?? [];
@@ -131,6 +137,7 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
             children: [
               IconButton(
                 icon: const Icon(Icons.chevron_left),
+                tooltip: 'Previous',
                 onPressed: _prev,
               ),
               Expanded(
@@ -148,14 +155,13 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
               ),
               IconButton(
                 icon: const Icon(Icons.chevron_right),
+                tooltip: 'Next',
                 onPressed: _next,
               ),
             ],
           ),
         ),
         // ── Strip / grid (horizontal swipe changes week/month) ─────────────
-        // Weeks/months slide in from the direction of travel; selecting a day
-        // within the same period doesn't re-animate (key stays stable).
         GestureDetector(
           onHorizontalDragEnd: _onSwipe,
           child: PageTransitionSwitcher(
@@ -220,30 +226,30 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
             child: KeyedSubtree(
               key: ValueKey(isoDate(_selectedDay)),
               child: weekEvents.when(
+                skipLoadingOnReload: true,
                 loading: () =>
                     const Center(child: CircularProgressIndicator()),
-                error: (e, _) => Center(child: Text('Error: $e')),
-                data: (_) {
-                  if (selectedEvents.isEmpty) {
-                    return const Center(
-                      child: Text('No events this day',
-                          style: TextStyle(color: Colors.grey)),
-                    );
-                  }
-                  return RefreshIndicator(
-                    onRefresh: () async =>
-                        ref.invalidate(weekEventsProvider(monday)),
-                    child: AnimationLimiter(
-                      child: ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
-                        itemCount: selectedEvents.length,
-                        itemBuilder: (ctx, i) => staggeredItem(ctx,
-                            position: i,
-                            child: TimelineCard(event: selectedEvents[i])),
-                      ),
-                    ),
-                  );
-                },
+                error: (e, _) => Center(child: Text(friendlyError(e))),
+                data: (_) => RefreshIndicator(
+                  onRefresh: () => _refresh(monday),
+                  child: selectedEvents.isEmpty
+                      ? ListView(children: [
+                          const SizedBox(height: 48),
+                          Center(
+                            child: Text('No events this day',
+                                style: TextStyle(color: cs.onSurfaceVariant)),
+                          ),
+                        ])
+                      : AnimationLimiter(
+                          child: ListView.builder(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
+                            itemCount: selectedEvents.length,
+                            itemBuilder: (ctx, i) => staggeredItem(ctx,
+                                position: i,
+                                child: TimelineCard(event: selectedEvents[i])),
+                          ),
+                        ),
+                ),
               ),
             ),
           ),

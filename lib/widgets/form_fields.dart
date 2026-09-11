@@ -57,12 +57,16 @@ class EndDateField extends StatelessWidget {
   final DateTime? firstDate;
   final String label;
 
+  /// Prefix shown with a chosen date, e.g. "Ends: Fri, 12 Jun 2026".
+  final String setLabel;
+
   const EndDateField({
     super.key,
     required this.value,
     required this.onChanged,
     this.firstDate,
     this.label = 'End date (optional)',
+    this.setLabel = 'Ends',
   });
 
   Future<void> _pick(BuildContext context) async {
@@ -92,13 +96,13 @@ class EndDateField extends StatelessWidget {
           suffixIcon: set
               ? IconButton(
                   icon: const Icon(Icons.clear),
-                  tooltip: 'Remove end date',
+                  tooltip: 'Clear date',
                   onPressed: () => onChanged(null),
                 )
               : null,
         ),
         child: Text(
-          set ? 'Ends: ${fmtDateLong(value!)}' : label,
+          set ? '$setLabel: ${fmtDateLong(value!)}' : label,
           style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                 color: set
                     ? null

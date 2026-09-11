@@ -3,44 +3,38 @@ import 'package:flutter/material.dart';
 
 import '../models/absence_period.dart';
 import '../models/base_rule.dart';
-import '../models/holiday_block.dart';
 import '../models/custody_request.dart';
+import '../models/holiday_block.dart';
 import '../models/manual_override.dart';
-import '../models/recurring_arrangement.dart';
 import '../models/resolved_event.dart';
 import '../models/rotation_scheme.dart';
-import '../models/weekday_rule.dart';
 
 /// Pure Dart class — no Flutter framework dependencies beyond [TimeOfDay].
 ///
-/// Priority for any given event slot:
-///   1. Manual override      (date-specific record in manual_overrides)
-///   2. Absence block        (absent parent → custody flips to the other parent)
-///   3. Weekday rule         (recurring day-of-week record in custody_weekday_rules)
-///   4. Base rotation        (pattern-based from [rotationScheme] and [rotationAnchor])
+/// Who has the kids on a day:
+///   1. Accepted day transfer   (from its pickup time onwards)
+///   2. Absence                 (absent parent → the other rotation parent)
+///   3. Holiday block
+///   4. Base rotation           (pattern-based from [rotationScheme] and [rotationAnchor])
 ///
-/// Accepted [CustodyRequest]s layer on top:
-///   - Day transfers  override [dayOwner] for that date (higher priority than weekday rules).
-///   - Windows        affect [parentAtTime] during their pickup→return window only.
+/// Per standing event, a date-specific manual override beats 2–4, and accepted
+/// custody requests (day transfers and time windows) beat everything by time
+/// of day. A day swap is simply two accepted day transfers.
 ///
 /// Per-child custody: [parentAtTime], [dayTransferFor], and [_custodyNoteAt]
 /// accept an optional [child] parameter. When supplied, only custody requests
 /// that cover that child (or "All") are considered — so a transfer for Henri
 /// does not affect Chris's events.
 ///
-/// Parent identity is now string-based (display names from the household).
-/// [rotationParentEven] and [rotationParentOdd] replace the former hardcoded
-/// `Parent.bennet` / `Parent.jana` enum values.
+/// The Kotlin `CoplanSyncWorker` mirrors this logic for the home-screen
+/// widgets — change one, update the other.
 class ResolutionEngine {
-  final List<BaseRule>             baseRules;
-  final List<ManualOverride>       overrides;
-  final List<CustodyRequest>       custodyRequests;
-  final List<WeekdayRule>          weekdayRules;
-  final List<RecurringArrangement> recurringArrangements;
-  final List<AbsencePeriod>        absencePeriods;
-  final List<HolidayBlock>         holidayBlocks;
+  final List<BaseRule>       baseRules;
+  final List<ManualOverride> overrides;
+  final List<CustodyRequest> custodyRequests;
+  final List<AbsencePeriod>  absencePeriods;
+  final List<HolidayBlock>   holidayBlocks;
 
-  /// Rotation config — previously from AppConstants, now passed in.
   final DateTime rotationAnchor;
   final String   rotationParentEven;
   final String   rotationParentOdd;
@@ -52,8 +46,7 @@ class ResolutionEngine {
   /// parents responsible by default).
   final String householdMode;
 
-  /// Per-date cache for [effectiveCustodyFor] to avoid recomputing the merged
-  /// real + virtual custody list multiple times per [resolveDay] pass.
+  /// Per-date cache for [effectiveCustodyFor].
   final Map<int, List<CustodyRequest>> _custodyCache = {};
 
   ResolutionEngine({
@@ -63,12 +56,10 @@ class ResolutionEngine {
     required this.rotationParentEven,
     required this.rotationParentOdd,
     RotationScheme? rotationScheme,
-    this.householdMode         = 'custody',
-    this.custodyRequests       = const [],
-    this.weekdayRules          = const [],
-    this.recurringArrangements = const [],
-    this.absencePeriods        = const [],
-    this.holidayBlocks         = const [],
+    this.householdMode   = 'custody',
+    this.custodyRequests = const [],
+    this.absencePeriods  = const [],
+    this.holidayBlocks   = const [],
   }) : rotationScheme = rotationScheme ?? RotationScheme.weekly();
 
   /// True when this engine operates in shared-household mode (no rotation).
@@ -84,19 +75,18 @@ class ResolutionEngine {
   /// covers that date.
   String? holidayOwner(DateTime date) => holidayBlockFor(date)?.assignedParent;
 
-  /// The day owner from weekday rules or base rotation only, ignoring any
-  /// accepted day-transfer custody request. Used for split-colour rendering
-  /// when a transfer pickup falls mid-day.
+  /// The scheduled owner from holiday blocks or the rotation only, ignoring
+  /// absences and custody requests. Used for split-colour rendering and as the
+  /// parent a transfer hands the kids over from.
   String baseOwner(DateTime date) {
     if (isSharedMode) return 'Both';
-    return _weekdayRuleParent(date) ?? holidayOwner(date) ?? weekOwner(date);
+    return _scheduledOwner(date);
   }
 
   /// Returns the rotation parent for [date] based on the configured scheme.
   ///
   /// Uses UTC epoch math so that DST transitions never shift [Duration.inDays]
-  /// and flip the parity (see ISSUES.md #1).
-  /// In shared mode, returns "Both" (no rotation applies).
+  /// and flip the parity. In shared mode, returns "Both".
   String weekOwner(DateTime date) {
     if (isSharedMode) return 'Both';
     final dateUtc   = DateTime.utc(date.year, date.month, date.day);
@@ -106,120 +96,42 @@ class ResolutionEngine {
   }
 
   /// The primary responsible parent for an entire day.
-  ///
-  /// Priority: accepted day-transfer request > weekday rule > week rotation >
-  ///           absence flip. Manual overrides are applied per-event in
-  ///           [_resolveRule] but day-level absence is checked here so the
-  ///           calendar grid colours correctly.
   String dayOwner(DateTime date) {
     final transfer = dayTransferFor(date);
     if (transfer != null) return transfer.toParent;
     if (isSharedMode) return 'Both';
-    final scheduled = _weekdayRuleParent(date) ?? holidayOwner(date) ?? weekOwner(date);
-    return _applyAbsence(scheduled, date);
+    return _applyAbsence(_scheduledOwner(date), date);
   }
 
-  /// The primary responsible parent for [child] on [date]. Useful for
-  /// per-child calendar colouring. Falls back to [dayOwner] when the child
-  /// has no specific custody request.
+  /// The primary responsible parent for [child] on [date]. Falls back to
+  /// [dayOwner] when the child has no specific custody request.
   String dayOwnerForChild(DateTime date, String child) {
     if (child == 'All') return dayOwner(date);
     final transfer = dayTransferFor(date, child: child);
     if (transfer != null) return transfer.toParent;
     if (isSharedMode) return 'Both';
-    final scheduled = _weekdayRuleParent(date) ?? holidayOwner(date) ?? weekOwner(date);
-    return _applyAbsence(scheduled, date);
+    return _applyAbsence(_scheduledOwner(date), date);
   }
 
-  /// Returns the absence covering [date] where the absent parent matches
-  /// [scheduledParent], or null if none.
+  /// Returns the absence covering [date], or null if none.
   AbsencePeriod? absenceFor(DateTime date) =>
       absencePeriods.firstWhereOrNull((a) => a.coversDate(date));
 
-  /// If [scheduledParent] is absent on [date], returns the other parent's name;
-  /// otherwise returns [scheduledParent] unchanged.
-  String _applyAbsence(String scheduledParent, DateTime date) {
-    final absence = absenceFor(date);
-    if (absence == null || absence.absentParent != scheduledParent) {
-      return scheduledParent;
-    }
-    // Flip to whichever rotation parent is not absent.
-    if (scheduledParent == rotationParentEven) return rotationParentOdd;
-    if (scheduledParent == rotationParentOdd)  return rotationParentEven;
-    return scheduledParent; // unknown parent name — leave unchanged
-  }
-
-  /// All accepted custody for [date]: real records plus virtual occurrences
-  /// expanded from recurring arrangements.  This is the single source the rest
-  /// of the engine reasons over, so every surface sees recurring transfers.
-  ///
-  /// Results are cached per date within this engine instance to avoid redundant
-  /// recomputation across [parentAtTime], [_custodyNoteAt], etc. (ISSUES #7).
+  /// All accepted custody requests for [date] (cached per date).
   List<CustodyRequest> effectiveCustodyFor(DateTime date) {
     final key = date.year * 10000 + date.month * 100 + date.day;
-    final cached = _custodyCache[key];
-    if (cached != null) return cached;
-
-    final real = custodyRequests
+    return _custodyCache[key] ??= custodyRequests
         .where((r) => r.isAccepted && _sameDay(r.date, date))
         .toList();
-    final result = recurringArrangements.isEmpty
-        ? real
-        : [...real, ..._virtualRecurringFor(date, real)];
-    _custodyCache[key] = result;
-    return result;
   }
 
-  /// The effective day-transfer (real or virtual recurring) for [date], if any.
-  /// When [child] is provided (and not "All"), only transfers covering that
-  /// specific child are considered.
+  /// The accepted day-transfer for [date], if any. When [child] is provided
+  /// (and not "All"), only transfers covering that specific child count.
   CustodyRequest? dayTransferFor(DateTime date, {String? child}) =>
       effectiveCustodyFor(date).firstWhereOrNull(
           (r) => r.isDayTransfer && _requestMatchesChild(r, child));
 
-  /// Expands recurring arrangements into virtual requests for [date].
-  /// Only fires for today/future dates (past is served by frozen real rows),
-  /// on/after the arrangement start, on weeks the OTHER parent owns the day,
-  /// and only when no real request already covers that date + child.
-  List<CustodyRequest> _virtualRecurringFor(
-      DateTime date, List<CustodyRequest> realForDate) {
-    final now       = DateTime.now();
-    final todayDate = DateTime(now.year, now.month, now.day);
-    final d         = DateTime(date.year, date.month, date.day);
-    if (d.isBefore(todayDate)) return const [];
-
-    final out = <CustodyRequest>[];
-    final dayBaseOwner = baseOwner(date);
-    for (final a in recurringArrangements) {
-      if (!a.active) continue;
-      if (a.dayOfWeek != date.weekday) continue;
-      final start = DateTime(a.startDate.year, a.startDate.month, a.startDate.day);
-      if (d.isBefore(start)) continue;
-      // Stop repeating after the arrangement's (inclusive) end date.
-      if (a.endDate != null) {
-        final end = DateTime(a.endDate!.year, a.endDate!.month, a.endDate!.day);
-        if (d.isAfter(end)) continue;
-      }
-      // Conditional: skip weeks where the recipient already owns the day.
-      if (dayBaseOwner == a.toParent) continue;
-      // Suppress when the recipient is absent — they can't take the kids.
-      final absence = absenceFor(date);
-      if (absence != null && absence.absentParent == a.toParent) continue;
-      // Suppress when a one-off request for the same recipient already covers
-      // this date + child (e.g. early drop-off replaces the weekly handover).
-      final covered = realForDate.any((r) =>
-          r.toParent == a.toParent &&
-          (r.childName == a.childName ||
-           r.childName == 'All' ||
-           a.childName == 'All'));
-      if (covered) continue;
-      out.add(a.toVirtualRequest(date, fromParent: dayBaseOwner));
-    }
-    return out;
-  }
-
   /// Accepted window requests (those with a return time) for [date].
-  /// Used by [parentAtTime] and by the month-grid split painter.
   List<CustodyRequest> custodyWindows(DateTime date) =>
       effectiveCustodyFor(date).where((r) => !r.isDayTransfer).toList();
 
@@ -239,16 +151,9 @@ class ResolutionEngine {
     // the window is still visible on the strip.
     if (dayRules.isEmpty) return false;
     return dayRules.every((rule) {
-      final t    = _parseTime(rule.eventTime);
-      final tMin = t.hour * 60 + t.minute;
+      final tMin = _minutes(_parseTime(rule.eventTime));
       return windows.any((r) {
-        final p    = _parseTime(r.pickupTime);
-        final pMin = p.hour * 60 + p.minute;
-        int retMin = 24 * 60;
-        if (!r.returnTimeTbd && r.returnTime != null) {
-          final ret = _parseTime(r.returnTime!);
-          retMin = ret.hour * 60 + ret.minute;
-        }
+        final (pMin, retMin) = _windowBounds(r);
         return tMin >= pMin && tMin < retMin;
       });
     });
@@ -258,29 +163,24 @@ class ResolutionEngine {
   /// When [child] is provided (and not "All"), only custody requests covering
   /// that child are considered — enabling per-child custody resolution.
   String parentAtTime(DateTime date, TimeOfDay time, {String? child}) {
-    final timeMin = time.hour * 60 + time.minute;
+    final timeMin = _minutes(time);
     for (final r in custodyWindows(date)) {
       if (!_requestMatchesChild(r, child)) continue;
-      final pickup    = _parseTime(r.pickupTime);
-      final pickupMin = pickup.hour * 60 + pickup.minute;
-      int returnMin   = 24 * 60;
-      if (!r.returnTimeTbd && r.returnTime != null) {
-        final ret = _parseTime(r.returnTime!);
-        returnMin = ret.hour * 60 + ret.minute;
-      }
-      if (timeMin >= pickupMin && timeMin < returnMin) {
-        return r.toParent;
-      }
+      final (pMin, retMin) = _windowBounds(r);
+      if (timeMin >= pMin && timeMin < retMin) return r.toParent;
     }
     // Day transfers only take effect from their pickup time onwards — events
     // before the handover still belong to the original day owner.
     final transfer = dayTransferFor(date, child: child);
     if (transfer != null) {
-      final p = _parseTime(transfer.pickupTime);
-      if (timeMin >= p.hour * 60 + p.minute) return transfer.toParent;
-      return _weekdayRuleParent(date) ?? holidayOwner(date) ?? weekOwner(date);
+      if (timeMin >= _minutes(_parseTime(transfer.pickupTime))) {
+        return transfer.toParent;
+      }
     }
-    return dayOwner(date);
+    // No custody request covers this slot (for this child): the scheduled
+    // owner. Not dayOwner() — that would apply a sibling's transfer.
+    if (isSharedMode) return 'Both';
+    return _applyAbsence(_scheduledOwner(date), date);
   }
 
   /// Resolves all scheduled events for [date], sorted chronologically.
@@ -288,27 +188,25 @@ class ResolutionEngine {
     final rules = baseRules.where((r) {
       if (r.dayOfWeek != date.weekday) return false;
       // Standing events stop repeating after their (inclusive) end date.
-      if (r.endDate != null && date.isAfter(r.endDate!)) return false;
+      if (r.endDate != null && _dateOnly(date).isAfter(_dateOnly(r.endDate!))) {
+        return false;
+      }
       // Directional handover rules only render when the named parent is the
-      // outgoing custody holder. Use holiday owner if one covers this date,
-      // otherwise fall back to the rotation week owner.
-      if (r.handoverFrom != null &&
-          r.handoverFrom != (holidayOwner(date) ?? weekOwner(date))) {
+      // outgoing custody holder (holiday block or rotation owner).
+      if (r.handoverFrom != null && r.handoverFrom != baseOwner(date)) {
         return false;
       }
       return true;
     }).toList();
     final events = rules.map((r) => _resolveRule(r, date)).toList();
 
-    // Ad-hoc one-off events
+    // One-off events (including exams). The responsible parent is resolved
+    // live, so later swaps, absences and holidays are always reflected.
     final adhoc = overrides
         .where((o) => _sameDay(o.targetDate, date) && o.isAdhoc)
         .map((o) {
           final t = _parseTime(o.overrideTime ?? '09:00');
           final adhocChild = o.childName == 'All' ? null : o.childName;
-          final custodyNote = _custodyNoteAt(date, t, child: adhocChild);
-          final actualParent =
-              custodyNote != null ? parentAtTime(date, t, child: adhocChild) : o.assignedParent;
           return ResolvedEvent(
             date:           date,
             time:           t,
@@ -317,24 +215,28 @@ class ResolutionEngine {
             activity:       o.adhocActivity ?? '',
             location:       o.adhocLocation ?? '',
             childName:      o.childName,
-            assignedParent: actualParent,
+            assignedParent: parentAtTime(date, t, child: adhocChild),
             note:           o.note,
             isAdhoc:        true,
             isShared:       o.isShared,
+            kind:           o.kind,
             overrideId:     o.id,
-            custodyNote:    custodyNote,
+            custodyNote:    _custodyNoteAt(date, t, child: adhocChild),
           );
         })
         .toList();
 
-    // Accepted custody — real records plus virtual recurring occurrences —
-    // appear as banner events (day transfers and windows alike).
+    // Accepted custody requests appear as banner events.
     final custodyEvents = effectiveCustodyFor(date).map((r) {
       final who = _custodyChildLabel(r.childName);
-      final label = r.isDayTransfer
-          ? '$who in ${r.toParent}\'s care'
-          : '$who in ${r.toParent}\'s care · ${r.timeWindowLabel}';
-      final recurringId = RecurringArrangement.recurringIdFrom(r.id);
+      final String label;
+      if (r.isSwapLeg) {
+        label = '$who in ${r.toParent}\'s care · swap';
+      } else if (r.isDayTransfer) {
+        label = '$who in ${r.toParent}\'s care';
+      } else {
+        label = '$who in ${r.toParent}\'s care · ${r.timeWindowLabel}';
+      }
       return ResolvedEvent(
         date:                  date,
         time:                  _parseTime(r.pickupTime),
@@ -344,29 +246,39 @@ class ResolutionEngine {
         assignedParent:        r.toParent,
         overrideReason:        r.note,
         isAdhoc:               true,
-        custodyRequestId:      recurringId == null ? r.id : null,
-        recurringId:           recurringId,
-        custodyTransportNote:  _transportNote(r),
+        custodyRequestId:      r.id,
+        swapGroup:             r.swapGroup,
+        custodyTransportNote:  r.isSwapLeg ? null : _transportNote(r),
       );
     }).toList();
 
     final all = [...events, ...adhoc, ...custodyEvents];
     all.sort((a, b) {
-      final aMin = a.time.hour * 60 + a.time.minute;
-      final bMin = b.time.hour * 60 + b.time.minute;
-      if (aMin != bMin) return aMin.compareTo(bMin);
-      // Tie-break: custody-request events (isAdhoc, no rule/override id)
-      // sort before regular and adhoc-override events so the "who has the
-      // kids" banner always appears above the events it covers.
-      final aCust = a.isAdhoc && a.ruleId == null && a.overrideId == null;
-      final bCust = b.isAdhoc && b.ruleId == null && b.overrideId == null;
-      if (aCust == bCust) return 0;
-      return aCust ? -1 : 1;
+      final byTime = _minutes(a.time).compareTo(_minutes(b.time));
+      if (byTime != 0) return byTime;
+      // Custody banners sort before the events they cover at the same minute.
+      if (a.isCustody == b.isCustody) return 0;
+      return a.isCustody ? -1 : 1;
     });
     return all;
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────
+
+  String _scheduledOwner(DateTime date) =>
+      holidayOwner(date) ?? weekOwner(date);
+
+  /// If [scheduledParent] is absent on [date], returns the other rotation
+  /// parent; otherwise returns [scheduledParent] unchanged.
+  String _applyAbsence(String scheduledParent, DateTime date) {
+    final absence = absenceFor(date);
+    if (absence == null || absence.absentParent != scheduledParent) {
+      return scheduledParent;
+    }
+    if (scheduledParent == rotationParentEven) return rotationParentOdd;
+    if (scheduledParent == rotationParentOdd)  return rotationParentEven;
+    return scheduledParent; // unknown parent name — leave unchanged
+  }
 
   ResolvedEvent _resolveRule(BaseRule rule, DateTime date) {
     // ── 1. Date-specific manual override ─────────────────────────────────────
@@ -377,7 +289,7 @@ class ResolutionEngine {
 
     final eventTime = _parseTime(override?.overrideTime ?? rule.eventTime);
 
-    // ── 2. Schedule parent: override > absence > weekday rule > rotation ──────
+    // ── 2. Schedule parent: override > absence > holiday > rotation ──────────
     String scheduleParent;
     String? scheduleReason;
 
@@ -386,14 +298,13 @@ class ResolutionEngine {
       scheduleParent = override.assignedParent;
       scheduleReason = override.reason.isEmpty ? null : override.reason;
     } else {
-      final weekdayParent = _weekdayRuleParent(date);
-      final rotationParent = weekdayParent ?? holidayOwner(date) ?? weekOwner(date);
+      final scheduled = _scheduledOwner(date);
       final absence = absenceFor(date);
-      if (absence != null && absence.absentParent == rotationParent) {
-        scheduleParent = _applyAbsence(rotationParent, date);
+      if (absence != null && absence.absentParent == scheduled) {
+        scheduleParent = _applyAbsence(scheduled, date);
         scheduleReason = absence.reason.isNotEmpty ? absence.reason : 'Absence';
       } else {
-        scheduleParent = rotationParent;
+        scheduleParent = scheduled;
         scheduleReason = null;
       }
     }
@@ -403,9 +314,8 @@ class ResolutionEngine {
     final note        = _custodyNoteAt(date, eventTime, child: child);
     final actualParent =
         note != null ? parentAtTime(date, eventTime, child: child) : scheduleParent;
-    // When a custody request changes the parent, drop the manual-override
-    // reason — showing the override's reason with the custody parent is
-    // confusing mixed provenance (see ISSUES.md #3).
+    // When a custody request changes the parent, drop the override reason —
+    // showing it next to the custody parent is confusing mixed provenance.
     final actualReason = note != null ? null : scheduleReason;
 
     return ResolvedEvent(
@@ -423,38 +333,26 @@ class ResolutionEngine {
     );
   }
 
-  /// Returns a short human-readable note when an accepted custody request
-  /// changes who is responsible for an event at [time] on [date].
-  /// When [child] is provided, only requests covering that child are checked.
-  /// Returns null when no custody request affects this slot.
+  /// A short note when an accepted custody request changes who is responsible
+  /// at [time] on [date], or null when no request affects this slot.
   String? _custodyNoteAt(DateTime date, TimeOfDay time, {String? child}) {
-    final timeMin = time.hour * 60 + time.minute;
+    final timeMin = _minutes(time);
 
     // Window requests first (they apply only during pickup→return).
     for (final r in custodyWindows(date)) {
       if (!_requestMatchesChild(r, child)) continue;
-      final pickup    = _parseTime(r.pickupTime);
-      final pickupMin = pickup.hour * 60 + pickup.minute;
-      int returnMin   = 24 * 60;
-      if (!r.returnTimeTbd && r.returnTime != null) {
-        final ret = _parseTime(r.returnTime!);
-        returnMin = ret.hour * 60 + ret.minute;
-      }
-      if (timeMin >= pickupMin && timeMin < returnMin) {
-        final till = r.returnTimeTbd
-            ? 'TBD'
-            : (r.returnTime ?? '…');
+      final (pMin, retMin) = _windowBounds(r);
+      if (timeMin >= pMin && timeMin < retMin) {
+        final till = r.returnTimeTbd ? 'TBD' : (r.returnTime ?? '…');
         return '${r.toParent} · ${r.pickupTime}–$till';
       }
     }
 
     // Day transfer only takes effect from its pickup time onwards.
     final transfer = dayTransferFor(date, child: child);
-    if (transfer != null) {
-      final p = _parseTime(transfer.pickupTime);
-      if (timeMin >= p.hour * 60 + p.minute) {
-        return '${transfer.toParent} · day transfer';
-      }
+    if (transfer != null &&
+        timeMin >= _minutes(_parseTime(transfer.pickupTime))) {
+      return '${transfer.toParent} · ${transfer.isSwapLeg ? 'day swap' : 'day transfer'}';
     }
 
     return null;
@@ -484,23 +382,28 @@ class ResolutionEngine {
     return '$pickup · $ret';
   }
 
-  /// The parent assigned by an active weekday rule for [date], or null. A rule
-  /// with an [WeekdayRule.endDate] no longer applies on dates after that day
-  /// (inclusive), so custody falls back to the rotation.
-  String? _weekdayRuleParent(DateTime date) {
-    final rule = weekdayRules.firstWhereOrNull((r) =>
-        r.active &&
-        r.dayOfWeek == date.weekday &&
-        (r.endDate == null || !date.isAfter(r.endDate!)));
-    return rule?.assignedParent;
+  /// (pickup, return) in minutes; an open-ended window runs to midnight.
+  (int, int) _windowBounds(CustodyRequest r) {
+    final pMin = _minutes(_parseTime(r.pickupTime));
+    var retMin = 24 * 60;
+    if (!r.returnTimeTbd && r.returnTime != null) {
+      retMin = _minutes(_parseTime(r.returnTime!));
+    }
+    return (pMin, retMin);
   }
+
+  static int _minutes(TimeOfDay t) => t.hour * 60 + t.minute;
+
+  static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
   bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
   TimeOfDay _parseTime(String hhmm) {
     final p = hhmm.split(':');
-    return TimeOfDay(hour: int.parse(p[0]), minute: int.parse(p[1]));
+    if (p.length < 2) return const TimeOfDay(hour: 0, minute: 0);
+    return TimeOfDay(
+        hour: int.tryParse(p[0]) ?? 0, minute: int.tryParse(p[1]) ?? 0);
   }
 
   /// "All" → "All", "Henri" → "Henri", "Henri,Chris" → "Henri & Chris".

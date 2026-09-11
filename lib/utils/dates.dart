@@ -19,6 +19,15 @@ String fmtTimeOr(TimeOfDay? t, [String fallback = '—']) =>
 /// "Fri, 12 Jun 2026" — the long display format used by pickers/sheets.
 String fmtDateLong(DateTime d) => DateFormat('EEE, d MMM yyyy').format(d);
 
+/// Midnight (local) of [d]'s calendar day.
+DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+/// [d] shifted by [days] calendar days (DST-safe, unlike adding a Duration).
+DateTime addDays(DateTime d, int days) => DateTime(d.year, d.month, d.day + days);
+
+/// "Sat 13 Sep" — compact date used in lists and swap summaries.
+String fmtDateShort(DateTime d) => DateFormat('EEE d MMM').format(d);
+
 /// True when [a] and [b] fall on the same calendar day.
 bool sameDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;

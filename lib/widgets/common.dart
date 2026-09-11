@@ -13,6 +13,7 @@ Future<bool> confirmDialog(
   required String title,
   required String body,
   String action = 'OK',
+  String cancel = 'Cancel',
   bool destructive = false,
 }) async {
   final result = await showDialog<bool>(
@@ -23,7 +24,7 @@ Future<bool> confirmDialog(
       actions: [
         TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel')),
+            child: Text(cancel)),
         FilledButton(
           style: destructive
               ? FilledButton.styleFrom(

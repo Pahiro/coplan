@@ -6,8 +6,21 @@ import 'package:coplan/models/base_rule.dart';
 import 'package:coplan/models/custody_request.dart';
 import 'package:coplan/models/household.dart';
 import 'package:coplan/models/manual_override.dart';
-import 'package:coplan/models/recurring_arrangement.dart';
-import 'package:coplan/models/weekday_rule.dart';
+import 'package:coplan/models/need.dart';
+
+Map<String, dynamic> requestRecord(String id, String date,
+        {String to = 'Bennet', String status = 'pending', String swapGroup = ''}) =>
+    {
+      'id': id,
+      'from_parent': 'Jana',
+      'to_parent': to,
+      'date': date,
+      'child_name': 'All',
+      'pickup_time': '00:00',
+      'return_time': '',
+      'status': status,
+      'swap_group': swapGroup,
+    };
 
 void main() {
   group('BaseRule.fromRecord', () {
@@ -40,7 +53,13 @@ void main() {
       });
       expect(r.isDayTransfer, true);
       expect(r.isAccepted, true);
+      expect(r.isSwapLeg, false);
       expect(r.timeWindowLabel, '17:30 onwards');
+    });
+
+    test('whole-day transfer reads as "All day"', () {
+      final r = CustodyRequest.fromRecord(requestRecord('c0', '2026-05-26'));
+      expect(r.timeWindowLabel, 'All day');
     });
 
     test('window: has return time', () {
@@ -77,32 +96,32 @@ void main() {
     });
   });
 
-  group('RecurringArrangement', () {
-    test('toVirtualRequest builds an accepted day transfer with synthetic id', () {
-      final a = RecurringArrangement(
-        id: 'arr1',
-        dayOfWeek: 2,
-        toParent: 'Bennet',
-        childName: 'All',
-        pickupTime: '17:30',
-        startDate: DateTime(2026, 5, 26),
-      );
-      final v = a.toVirtualRequest(DateTime(2026, 6, 9), fromParent: 'Jana');
-      expect(v.id, 'recurring:arr1:2026-06-09');
-      expect(v.fromParent, 'Jana');
-      expect(v.toParent, 'Bennet');
-      expect(v.isAccepted, true);
-      expect(v.isDayTransfer, true);
+  group('groupRequests', () {
+    test('collapses swap legs into one group sorted by date', () {
+      final requests = [
+        CustodyRequest.fromRecord(requestRecord('solo', '2026-10-01')),
+        CustodyRequest.fromRecord(requestRecord('leg2', '2026-10-11', to: 'Jana', swapGroup: 'g1')),
+        CustodyRequest.fromRecord(requestRecord('leg1', '2026-10-04', swapGroup: 'g1')),
+      ];
+      final groups = groupRequests(requests);
+      expect(groups.length, 2);
+      expect(groups[0].isSwap, isFalse);
+      expect(groups[1].isSwap, isTrue);
+      expect(groups[1].key, 'g1');
+      expect(groups[1].legs.map((r) => r.id), ['leg1', 'leg2']);
+      expect(groups[1].legTo('Jana')?.id, 'leg2');
     });
 
-    test('recurringIdFrom extracts the arrangement id', () {
-      expect(RecurringArrangement.recurringIdFrom('recurring:arr1:2026-06-09'),
-          'arr1');
-      expect(RecurringArrangement.recurringIdFrom('abc123'), isNull);
+    test('a swap stays pending until every leg is answered', () {
+      final groups = groupRequests([
+        CustodyRequest.fromRecord(requestRecord('a', '2026-10-04', status: 'accepted', swapGroup: 'g')),
+        CustodyRequest.fromRecord(requestRecord('b', '2026-10-11', swapGroup: 'g')),
+      ]);
+      expect(groups.single.status, CustodyStatus.pending);
     });
   });
 
-  group('ManualOverride.fromRecord adhoc inference', () {
+  group('ManualOverride.fromRecord', () {
     test('explicit is_adhoc true', () {
       final o = ManualOverride.fromRecord({
         'id': 'o1',
@@ -115,8 +134,23 @@ void main() {
         'reason': 'Birthday',
       });
       expect(o.isAdhoc, true);
+      expect(o.isExam, false);
       expect(o.adhocActivity, 'Birthday');
       expect(o.adhocLocation, 'Park');
+    });
+
+    test('exam kind', () {
+      final o = ManualOverride.fromRecord({
+        'id': 'o4',
+        'target_date': '2026-10-20',
+        'child_name': 'Henri',
+        'assigned_parent': 'Bennet',
+        'is_adhoc': true,
+        'activity': 'Maths P1',
+        'reason': 'Maths P1',
+        'kind': 'exam',
+      });
+      expect(o.isExam, true);
     });
 
     test('missing is_adhoc but non-empty reason → treated as adhoc', () {
@@ -142,16 +176,27 @@ void main() {
     });
   });
 
-  group('WeekdayRule.fromRecord', () {
-    test('parses and defaults active', () {
-      final w = WeekdayRule.fromRecord({
-        'id': 'w1',
-        'day_of_week': 3,
-        'assigned_parent': 'Jana',
+  group('Need.fromRecord', () {
+    test('parses a claimed item with defaults', () {
+      final n = Need.fromRecord({
+        'id': 'n1',
+        'household': 'h1',
+        'title': 'Tennis racket',
+        'child_name': '',
+        'note': '',
+        'needed_by': '2026-10-01',
+        'status': 'claimed',
+        'claimed_by': 'uJana',
+        'expense': '',
+        'created_by': 'uBennet',
+        'created': '2026-09-11 08:00:00.000Z',
       });
-      expect(w.dayOfWeek, 3);
-      expect(w.assignedParent, 'Jana');
-      expect(w.active, true);
+      expect(n.childName, 'All');
+      expect(n.note, isNull);
+      expect(n.isClaimed, isTrue);
+      expect(n.isBought, isFalse);
+      expect(n.neededBy, DateTime(2026, 10, 1));
+      expect(n.expenseId, isNull);
     });
   });
 

@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 
 import 'add_event_sheet.dart';
 import 'common.dart';
+import 'exam_timetable_sheet.dart';
 import 'mark_absence_sheet.dart';
 import 'new_request_sheet.dart';
 
 /// Opens the unified "New…" chooser sheet.
-/// Pass [initialDate] so the event/request sheets pre-fill the selected
-/// calendar day.
+/// Pass [initialDate] so the sheets pre-fill the selected calendar day.
 Future<void> showNewActionSheet(BuildContext context,
     {DateTime? initialDate}) {
   return showModalBottomSheet<void>(
@@ -45,7 +45,7 @@ class _NewActionSheet extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.swap_horiz),
               title: const Text('Custody request'),
-              subtitle: const Text('Swap a day or arrange a time window'),
+              subtitle: const Text('Hand over a day, swap days, or a time window'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () =>
                   _open(context, NewRequestSheet(initialDate: initialDate)),
@@ -57,6 +57,14 @@ class _NewActionSheet extends StatelessWidget {
               trailing: const Icon(Icons.chevron_right),
               onTap: () => _open(context,
                   AddEventSheet(initialDate: initialDate ?? DateTime.now())),
+            ),
+            ListTile(
+              leading: const Icon(Icons.school_outlined),
+              title: const Text('Exam timetable'),
+              subtitle: const Text('Add a child\'s exam papers in one go'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () =>
+                  _open(context, ExamTimetableSheet(initialDate: initialDate)),
             ),
             ListTile(
               leading: const Icon(Icons.hiking),

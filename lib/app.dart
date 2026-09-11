@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:animations/animations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,18 +7,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'providers/auth_provider.dart';
 import 'providers/connectivity_provider.dart';
 import 'providers/custody_provider.dart';
+import 'providers/navigation_provider.dart';
 import 'providers/realtime_provider.dart';
+import 'providers/refresh.dart';
+import 'providers/schedule_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/calendar_screen.dart';
 import 'screens/dashboard_screen.dart';
-import 'screens/expense_export_screen.dart';
 import 'screens/expenses_screen.dart';
 import 'screens/household_setup_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/requests_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/notification_service.dart';
-import 'widgets/common.dart';
+import 'services/widget_cache_service.dart';
+import 'utils/dates.dart';
 import 'widgets/motion.dart';
 
 class CoplanApp extends ConsumerWidget {
@@ -29,8 +34,8 @@ class CoplanApp extends ConsumerWidget {
 
     const seed = Color(0xFF1565C0);
 
-    // Shared-axis push/pop on every route — the single biggest "feels modern"
-    // change. Applied per platform so web/desktop match Android.
+    // Shared-axis push/pop on every route. Applied per platform so web/desktop
+    // match Android.
     final transitions = PageTransitionsTheme(builders: {
       for (final platform in TargetPlatform.values)
         platform: const SharedAxisPageTransitionsBuilder(
@@ -71,7 +76,9 @@ class CoplanApp extends ConsumerWidget {
   }
 }
 
-/// Root scaffold with bottom navigation (Today | Calendar) and shared AppBar actions.
+/// Root scaffold with bottom navigation and the shared app bar. Also owns the
+/// app-wide freshness: realtime subscriptions, the offline queue, catching up
+/// after the app resumes, and rolling "today" over at midnight.
 class _MainShell extends ConsumerStatefulWidget {
   const _MainShell();
 
@@ -79,60 +86,64 @@ class _MainShell extends ConsumerStatefulWidget {
   ConsumerState<_MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends ConsumerState<_MainShell> {
-  int _tabIndex = 0;
-
+class _MainShellState extends ConsumerState<_MainShell>
+    with WidgetsBindingObserver {
   static const _titles = ['Today', 'Calendar', 'Expenses'];
+
+  Timer? _clock;
+  DateTime _lastRefresh = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _clock = Timer.periodic(const Duration(minutes: 1), (_) => _syncToday());
+    WidgetCacheService.updateSoon();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _clock?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    _syncToday();
+    // Catch up on anything the realtime connection missed in the background.
+    // Throttled: pickers, the share sheet and the installer also resume us.
+    if (DateTime.now().difference(_lastRefresh) > const Duration(seconds: 30)) {
+      _lastRefresh = DateTime.now();
+      refreshAppData(ref.invalidate);
+    }
+    WidgetCacheService.updateSoon();
+  }
+
+  void _syncToday() {
+    final today = dateOnly(DateTime.now());
+    final notifier = ref.read(todayProvider.notifier);
+    if (notifier.state != today) notifier.state = today;
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Activate real-time PocketBase subscription for notifications
     ref.watch(realtimeNotificationsProvider);
-    // Keep connectivity watcher alive for the session
     ref.watch(connectivityWatcherProvider);
 
+    final tab          = ref.watch(shellTabProvider);
     final queuedCount  = ref.watch(pendingOpsCountProvider);
     final pendingCount = ref.watch(pendingCustodyCountProvider);
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_titles[_tabIndex]),
+        title: Text(_titles[tab]),
         actions: [
-          // Expenses-tab actions: export & settle-up (keeps the tab to one FAB)
-          if (_tabIndex == 2) ...[
-            IconButton(
-              icon: const Icon(Icons.download_outlined),
-              tooltip: 'Export expenses CSV',
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ExpenseExportScreen()),
-              ),
-            ),
-            Consumer(
-              builder: (context, ref, _) => IconButton(
-                icon: const Icon(Icons.handshake_outlined),
-                tooltip: 'Settle up',
-                onPressed: () => showSettleUpDialog(context, ref),
-              ),
-            ),
-          ],
-          // Notification bell with badge
-          IconButton(
-            icon: Badge(
-              isLabelVisible: pendingCount > 0,
-              label: Text('$pendingCount'),
-              child: const Icon(Icons.notifications_outlined),
-            ),
-            tooltip: 'Requests',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const RequestsScreen()),
-            ),
-          ),
           if (queuedCount > 0)
             Tooltip(
               message:
-                  '$queuedCount action${queuedCount == 1 ? '' : 's'} queued — will sync when online',
+                  '$queuedCount change${queuedCount == 1 ? '' : 's'} waiting to sync',
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 child: Chip(
@@ -145,6 +156,18 @@ class _MainShellState extends ConsumerState<_MainShell> {
               ),
             ),
           IconButton(
+            icon: Badge(
+              isLabelVisible: pendingCount > 0,
+              label: Text('$pendingCount'),
+              child: const Icon(Icons.notifications_outlined),
+            ),
+            tooltip: 'Requests',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const RequestsScreen()),
+            ),
+          ),
+          IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: 'Settings',
             onPressed: () => Navigator.push(
@@ -152,23 +175,10 @@ class _MainShellState extends ConsumerState<_MainShell> {
               MaterialPageRoute(builder: (_) => const SettingsScreen()),
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Sign out',
-            onPressed: () async {
-              final ok = await confirmDialog(
-                context,
-                title: 'Sign out?',
-                body: 'You can sign back in with your email and password.',
-                action: 'Sign out',
-              );
-              if (ok) ref.read(authProvider.notifier).logout();
-            },
-          ),
         ],
       ),
       body: FadeThroughIndexedStack(
-        index: _tabIndex,
+        index: tab,
         children: const [
           DashboardScreen(),
           CalendarScreen(),
@@ -176,8 +186,9 @@ class _MainShellState extends ConsumerState<_MainShell> {
         ],
       ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _tabIndex,
-        onDestinationSelected: (i) => setState(() => _tabIndex = i),
+        selectedIndex: tab,
+        onDestinationSelected: (i) =>
+            ref.read(shellTabProvider.notifier).state = i,
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.today_outlined),

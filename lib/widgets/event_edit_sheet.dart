@@ -35,6 +35,7 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
   bool get _isCreateRule  => widget.event == null;
   bool get _isEditRule     => widget.event?.ruleId != null && widget.event?.overrideId == null;
   bool get _isEditOverride => widget.event?.overrideId != null && (widget.event?.isAdhoc ?? false);
+  bool get _isExam         => widget.event?.isExam ?? false;
 
   @override
   void initState() {
@@ -147,6 +148,8 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
       title = 'New standing event';
     } else if (_isEditRule) {
       title = 'Edit standing event';
+    } else if (_isExam) {
+      title = 'Edit exam';
     } else {
       title = 'Edit event';
     }
@@ -195,10 +198,10 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
               controller: _activityCtrl,
               textCapitalization: TextCapitalization.sentences,
               onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                labelText: 'Event name',
-                prefixIcon: Icon(Icons.event_outlined),
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: _isExam ? 'Subject / paper' : 'Event name',
+                prefixIcon: Icon(_isExam ? Icons.school_outlined : Icons.event_outlined),
+                border: const OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 12),
@@ -260,14 +263,14 @@ class _EventEditSheetState extends ConsumerState<EventEditSheet> {
             ),
             const SizedBox(height: 4),
 
-            // Shared toggle
-            SwitchListTile(
-              value: _isShared,
-              onChanged: (v) => setState(() => _isShared = v),
-              title: const Text('Shared event'),
-              subtitle: const Text('Both parents always see this event'),
-              contentPadding: EdgeInsets.zero,
-            ),
+            if (!_isExam)
+              SwitchListTile(
+                value: _isShared,
+                onChanged: (v) => setState(() => _isShared = v),
+                title: const Text('Both parents attend'),
+                subtitle: const Text('For events you both go to'),
+                contentPadding: EdgeInsets.zero,
+              ),
             const SizedBox(height: 16),
 
             BusyButton(

@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../providers/auth_provider.dart';
+import '../../widgets/common.dart';
+import '../expense_export_screen.dart';
 import '../export_screen.dart';
 
 class AccountSettingsScreen extends ConsumerWidget {
@@ -39,7 +41,41 @@ class AccountSettingsScreen extends ConsumerWidget {
                     MaterialPageRoute(builder: (_) => const ExportScreen()),
                   ),
                 ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.receipt_long_outlined),
+                  title: const Text('Export expenses'),
+                  subtitle: const Text('Expenses and payments as CSV, e.g. for tax records'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ExpenseExportScreen()),
+                  ),
+                ),
               ],
+            ),
+          ),
+
+          Card(
+            margin: const EdgeInsets.only(bottom: 16),
+            child: ListTile(
+              leading: Icon(Icons.logout,
+                  color: Theme.of(context).colorScheme.error),
+              title: Text('Sign out',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              onTap: () async {
+                final ok = await confirmDialog(
+                  context,
+                  title: 'Sign out?',
+                  body: 'You can sign back in with your email and password.',
+                  action: 'Sign out',
+                );
+                if (!ok) return;
+                await ref.read(authProvider.notifier).logout();
+                if (context.mounted) {
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                }
+              },
             ),
           ),
 

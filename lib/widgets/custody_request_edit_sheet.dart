@@ -1,21 +1,15 @@
-import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 
 import '../models/custody_request.dart';
-import '../models/recurring_arrangement.dart';
-import '../models/weekday_rule.dart';
 import '../providers/custody_provider.dart';
 import '../providers/household_provider.dart';
-import '../providers/schedule_provider.dart';
 import '../utils/dates.dart';
 import 'common.dart';
 import 'form_fields.dart';
 
-/// Full edit form for an existing [CustodyRequest].
-/// Extracted so it can be shown from both [CustodyRequestTile]
-/// and [TimelineCard].
+/// Edit form for a pending one-way request (day handover or time window).
+/// Answered requests and swaps can't be edited — withdraw and ask again.
 class CustodyRequestEditSheet extends ConsumerStatefulWidget {
   final CustodyRequest request;
   const CustodyRequestEditSheet({super.key, required this.request});
@@ -29,14 +23,12 @@ class _CustodyRequestEditSheetState
     extends ConsumerState<CustodyRequestEditSheet> {
   late DateTime     _date;
   late Set<String>  _selectedChildren; // empty = "All"
-  late TimeOfDay _pickupTime;
-  late bool      _hasReturnTime;
-  late TimeOfDay? _returnTime;
-  late bool      _returnTimeTbd;
-  late bool      _toParentCollects;
-  late bool      _toParentReturns;
-  late bool      _repeatWeekly;
-  DateTime?      _repeatEndDate; // optional "repeats until" for the standing rule
+  late TimeOfDay    _pickupTime;
+  late bool         _hasReturnTime;
+  late TimeOfDay?   _returnTime;
+  late bool         _returnTimeTbd;
+  late bool         _toParentCollects;
+  late bool         _toParentReturns;
   final _noteCtrl = TextEditingController();
   bool _saving = false;
 
@@ -53,16 +45,6 @@ class _CustodyRequestEditSheetState
     _toParentCollects = r.toParentCollects;
     _toParentReturns  = r.toParentReturns;
     _noteCtrl.text    = r.note ?? '';
-    // Reflect whether a recurring arrangement (or a stale weekday rule) already
-    // covers this weekday for this recipient.
-    final rules        = ref.read(weekdayRulesProvider).valueOrNull ?? <WeekdayRule>[];
-    final arrangements = ref.read(recurringArrangementsProvider).valueOrNull
-        ?? <RecurringArrangement>[];
-    final existingArr = arrangements.firstWhereOrNull((a) =>
-        a.active && a.dayOfWeek == r.date.weekday && a.toParent == r.toParent);
-    _repeatWeekly = existingArr != null ||
-        rules.any((wr) => wr.active && wr.dayOfWeek == r.date.weekday);
-    _repeatEndDate = existingArr?.endDate;
   }
 
   @override
@@ -72,11 +54,12 @@ class _CustodyRequestEditSheetState
   }
 
   Future<void> _pickDate() async {
+    final today = dateOnly(DateTime.now());
     final picked = await showDatePicker(
       context: context,
       initialDate: _date,
-      firstDate: DateTime.now().subtract(const Duration(days: 1)),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      firstDate: _date.isBefore(today) ? _date : addDays(today, -1),
+      lastDate: addDays(today, 365),
     );
     if (picked != null) setState(() => _date = picked);
   }
@@ -93,7 +76,7 @@ class _CustodyRequestEditSheetState
     setState(() => _saving = true);
     try {
       final allChildNames =
-          (ref.read(householdChildNamesProvider)).map((c) => c.name).toList();
+          ref.read(householdChildNamesProvider).map((c) => c.name).toList();
       await ref.read(custodyRequestsProvider.notifier).updateRequest(
             widget.request.id,
             date:             isoDate(_date),
@@ -107,39 +90,6 @@ class _CustodyRequestEditSheetState
             toParentCollects: _toParentCollects,
             toParentReturns:  _toParentReturns,
           );
-
-      // Sync the repeat setting via a logic-based recurring arrangement.  A
-      // single rule is expanded by the engine for future weeks (only where the
-      // other parent owns the day) and frozen into history as days pass.
-      if (!_hasReturnTime) {
-        // Clean up any stale full-day weekday rule from the legacy approach.
-        final rules     = ref.read(weekdayRulesProvider).valueOrNull ?? <WeekdayRule>[];
-        final staleRule = rules.firstWhereOrNull(
-            (wr) => wr.active && wr.dayOfWeek == _date.weekday);
-        if (staleRule != null) {
-          await ref.read(weekdayRulesNotifierProvider.notifier).delete(staleRule.id);
-        }
-
-        final recurring = ref.read(recurringArrangementsNotifierProvider.notifier);
-        if (_repeatWeekly) {
-          await recurring.upsert(
-            dayOfWeek:        _date.weekday,
-            toParent:         widget.request.toParent,
-            childName:        encodeChildSelection(_selectedChildren, allChildNames),
-            pickupTime:       fmtTime(_pickupTime),
-            returnTime:       null,
-            returnTimeTbd:    false,
-            toParentCollects: _toParentCollects,
-            toParentReturns:  false,
-            startDate:        isoDate(_date),
-            endDate:          _repeatEndDate != null ? isoDate(_repeatEndDate!) : null,
-            note:             _noteCtrl.text.isEmpty ? null : _noteCtrl.text,
-          );
-        } else {
-          await recurring.deleteForDay(_date.weekday, toParent: widget.request.toParent);
-        }
-      }
-
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) showErrorSnack(context, e);
@@ -150,6 +100,7 @@ class _CustodyRequestEditSheetState
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: sheetPadding(context),
       child: SingleChildScrollView(
@@ -164,18 +115,15 @@ class _CustodyRequestEditSheetState
                     ?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 20),
 
-            // Date
             PickerField.date(label: fmtDateLong(_date), onTap: _pickDate),
             const SizedBox(height: 12),
 
-            // Child — multi-select chips; none selected = All
             ChildChips(
               selected: _selectedChildren,
               onChanged: (s) => setState(() => _selectedChildren = s),
             ),
             const SizedBox(height: 12),
 
-            // Pickup time
             PickerField(
               label:
                   '${_toParentCollects ? 'Pickup' : 'Drop off'}: ${fmtTime(_pickupTime)}',
@@ -183,7 +131,6 @@ class _CustodyRequestEditSheetState
             ),
             const SizedBox(height: 8),
 
-            // Transport at pickup — directly below so the label updates in context
             CustodyEditTransportRow(
               label:      'Who brings the kids?',
               trueLabel:  '${widget.request.toParent} picks up',
@@ -193,7 +140,6 @@ class _CustodyRequestEditSheetState
             ),
             const SizedBox(height: 4),
 
-            // Has return time — shown immediately after pickup so it's always visible
             SwitchListTile(
               value: _hasReturnTime,
               onChanged: (v) => setState(() {
@@ -204,10 +150,10 @@ class _CustodyRequestEditSheetState
                   _toParentReturns = false;
                 }
               }),
-              title: const Text('Has a return time'),
+              title: const Text('Kids come back the same day'),
               subtitle: Text(_hasReturnTime
-                  ? 'Kids return to the other parent'
-                  : 'Day transfer — kids stay overnight'),
+                  ? 'A time window with a return time'
+                  : 'Day handover — kids stay overnight'),
               contentPadding: EdgeInsets.zero,
             ),
 
@@ -224,36 +170,8 @@ class _CustodyRequestEditSheetState
                 ),
                 const SizedBox(width: 8),
                 Text('Return time TBD',
-                    style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                    style: TextStyle(color: cs.onSurfaceVariant)),
               ]),
-              const SizedBox(height: 8),
-            ],
-
-            // Repeat weekly — only for day transfers
-            if (!_hasReturnTime) ...[
-              SwitchListTile(
-                value: _repeatWeekly,
-                onChanged: (v) => setState(() => _repeatWeekly = v),
-                title: Text(
-                    'Repeat every ${DateFormat('EEEE').format(_date)}'),
-                subtitle: Text(_repeatWeekly
-                    ? 'Standing rule active — toggle off to remove'
-                    : 'One-time request only'),
-                contentPadding: EdgeInsets.zero,
-              ),
-              if (_repeatWeekly) ...[
-                const SizedBox(height: 8),
-                EndDateField(
-                  value: _repeatEndDate,
-                  firstDate: _date,
-                  label: 'Repeats forever (set an end date)',
-                  onChanged: (d) => setState(() => _repeatEndDate = d),
-                ),
-              ],
-            ],
-
-            if (_hasReturnTime) ...[
               const SizedBox(height: 8),
               CustodyEditTransportRow(
                 label:      'Who handles the return?',
@@ -263,9 +181,8 @@ class _CustodyRequestEditSheetState
                 onChanged:  (v) => setState(() => _toParentReturns = v),
               ),
             ],
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
 
-            // Note
             TextField(
               controller: _noteCtrl,
               maxLines: 2,
